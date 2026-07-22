@@ -78,6 +78,7 @@ module healthModel './modules/health-model.bicep' = {
     aksResourceId: aks.outputs.aksId
     logAnalyticsWorkspaceId: monitoring.outputs.logAnalyticsWorkspaceId
     azureMonitorWorkspaceId: monitoring.outputs.azureMonitorWorkspaceId
+    actionGroupId: actionGroup.outputs.actionGroupId
   }
 }
 
