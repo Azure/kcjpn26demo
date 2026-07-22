@@ -76,6 +76,57 @@ resource prometheusDcr 'Microsoft.Insights/dataCollectionRules@2024-03-11' = {
   }
 }
 
+// Container Insights data collection rule. Enabling the `omsagent` addon with AAD auth does NOT
+// auto-create this DCR (only the CLI/portal onboarding does); without it the ama-logs agent has
+// no collection config and NOTHING lands in the LAW (no Heartbeat, KubePodInventory, etc.).
+// The `Microsoft-ContainerInsights-Group-Default` stream group expands to the standard tables
+// (KubePodInventory, KubeNodeInventory, KubeEvents, ContainerLogV2, InsightsMetrics, ...).
+resource containerInsightsDcr 'Microsoft.Insights/dataCollectionRules@2024-03-11' = {
+  name: '${namePrefix}-ci-dcr'
+  location: location
+  kind: 'Linux'
+  properties: {
+    dataSources: {
+      extensions: [
+        {
+          name: 'ContainerInsightsExtension'
+          extensionName: 'ContainerInsights'
+          streams: [
+            'Microsoft-ContainerInsights-Group-Default'
+          ]
+          extensionSettings: {
+            dataCollectionSettings: {
+              interval: '1m'
+              namespaceFilteringMode: 'Off'
+              namespaces: []
+              enableContainerLogV2: true
+            }
+          }
+        }
+      ]
+    }
+    destinations: {
+      logAnalytics: [
+        {
+          workspaceResourceId: law.id
+          name: 'ciworkspace'
+        }
+      ]
+    }
+    dataFlows: [
+      {
+        streams: [
+          'Microsoft-ContainerInsights-Group-Default'
+        ]
+        destinations: [
+          'ciworkspace'
+        ]
+      }
+    ]
+  }
+}
+
 output logAnalyticsWorkspaceId string = law.id
 output azureMonitorWorkspaceId string = amw.id
 output prometheusDcrId string = prometheusDcr.id
+output containerInsightsDcrId string = containerInsightsDcr.id

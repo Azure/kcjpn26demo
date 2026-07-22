@@ -49,6 +49,7 @@ module aks './modules/aks.bicep' = {
     aksSubnetId: network.outputs.aksSubnetId
     logAnalyticsWorkspaceId: monitoring.outputs.logAnalyticsWorkspaceId
     prometheusDcrId: monitoring.outputs.prometheusDcrId
+    containerInsightsDcrId: monitoring.outputs.containerInsightsDcrId
   }
 }
 

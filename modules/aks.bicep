@@ -16,6 +16,9 @@ param logAnalyticsWorkspaceId string
 @description('Resource ID of the managed-Prometheus data collection rule (routes metrics to the AMW).')
 param prometheusDcrId string
 
+@description('Resource ID of the Container Insights data collection rule (routes logs/inventory to the LAW).')
+param containerInsightsDcrId string
+
 @description('Kubernetes version for the cluster.')
 param kubernetesVersion string = '1.36'
 
@@ -99,6 +102,17 @@ resource prometheusDcra 'Microsoft.Insights/dataCollectionRuleAssociations@2024-
   properties: {
     dataCollectionRuleId: prometheusDcrId
     description: 'Managed Prometheus metrics from AKS to the Azure Monitor workspace.'
+  }
+}
+
+// Associate the Container Insights DCR with the cluster so the ama-logs agent collects logs and
+// inventory (KubePodInventory, ContainerLogV2, ...) into the Log Analytics workspace.
+resource containerInsightsDcra 'Microsoft.Insights/dataCollectionRuleAssociations@2024-03-11' = {
+  name: 'ContainerInsightsExtension'
+  scope: aks
+  properties: {
+    dataCollectionRuleId: containerInsightsDcrId
+    description: 'Container Insights logs and inventory from AKS to the Log Analytics workspace.'
   }
 }
 

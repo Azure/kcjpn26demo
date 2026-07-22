@@ -129,6 +129,11 @@ var relationships = [
     child: 'amw'
     kind: 'SendsMetricsTo'
   }
+  {
+    parent: 'aks-cluster'
+    child: 'subscription'
+    kind: 'DependsOn'
+  }
 ]
 
 resource healthModel 'Microsoft.CloudHealth/healthmodels@2026-05-01-preview' = {
@@ -255,6 +260,27 @@ resource serviceEntities 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01
                 }
               }
             }
+            {
+              // Counterpart to `running-pods`: surfaces pods stuck in Failed/Pending state.
+              signalKind: 'LogAnalyticsQuery'
+              name: 'non-running-pods'
+              displayName: 'Non-running pods (Failed/Pending)'
+              refreshInterval: 'PT5M'
+              dataUnit: 'Count'
+              queryText: 'KubePodInventory | where Namespace == "loadgen" | where ControllerName startswith "${svc.name}" | summarize arg_max(TimeGenerated, PodStatus) by Name | summarize NotRunningPods = countif(PodStatus in ("Failed", "Pending"))'
+              timeGrain: 'PT10M'
+              valueColumnName: 'NotRunningPods'
+              evaluationRules: {
+                degradedRule: {
+                  operator: 'GreaterThan'
+                  threshold: 0
+                }
+                unhealthyRule: {
+                  operator: 'GreaterThan'
+                  threshold: 2
+                }
+              }
+            }
           ]
         }
         // Managed Prometheus (Azure Monitor workspace): available replicas + HPA saturation.
@@ -344,6 +370,26 @@ resource lawEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-previ
         resourceHealth: {
           enabled: 'Enabled'
         }
+        signals: [
+          {
+            // Recommended workspace metric (ahm-signal-manifest): agent heartbeat count.
+            signalKind: 'AzureResourceMetric'
+            name: 'heartbeat-count'
+            displayName: 'Heartbeat count'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Count'
+            metricNamespace: 'microsoft.operationalinsights/workspaces'
+            metricName: 'Heartbeat'
+            timeGrain: 'PT5M'
+            aggregationType: 'Total'
+            evaluationRules: {
+              unhealthyRule: {
+                operator: 'LessThanOrEqual'
+                threshold: 0
+              }
+            }
+          }
+        ]
       }
       azureLogAnalytics: {
         authenticationSetting: authSetting.name
@@ -432,6 +478,65 @@ resource aksEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-previ
               }
             }
           }
+          {
+            signalKind: 'AzureResourceMetric'
+            name: 'node-memory-working-set'
+            displayName: 'Node memory working set %'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Percent'
+            metricNamespace: 'microsoft.containerservice/managedclusters'
+            metricName: 'node_memory_working_set_percentage'
+            timeGrain: 'PT5M'
+            aggregationType: 'Average'
+            evaluationRules: {
+              unhealthyRule: {
+                operator: 'GreaterThan'
+                threshold: 100
+              }
+            }
+          }
+          {
+            signalKind: 'AzureResourceMetric'
+            name: 'node-memory-rss'
+            displayName: 'Node memory RSS %'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Percent'
+            metricNamespace: 'microsoft.containerservice/managedclusters'
+            metricName: 'node_memory_rss_percentage'
+            timeGrain: 'PT15M'
+            aggregationType: 'Average'
+            evaluationRules: {
+              degradedRule: {
+                operator: 'GreaterThan'
+                threshold: 75
+              }
+              unhealthyRule: {
+                operator: 'GreaterThan'
+                threshold: 90
+              }
+            }
+          }
+          {
+            signalKind: 'AzureResourceMetric'
+            name: 'node-disk-usage'
+            displayName: 'Node disk usage %'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Percent'
+            metricNamespace: 'microsoft.containerservice/managedclusters'
+            metricName: 'node_disk_usage_percentage'
+            timeGrain: 'PT15M'
+            aggregationType: 'Average'
+            evaluationRules: {
+              degradedRule: {
+                operator: 'GreaterThan'
+                threshold: 75
+              }
+              unhealthyRule: {
+                operator: 'GreaterThan'
+                threshold: 90
+              }
+            }
+          }
         ]
       }
       // Managed Prometheus: node memory pressure, unready nodes and pending pods.
@@ -517,6 +622,44 @@ resource amwEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-previ
         resourceHealth: {
           enabled: 'Enabled'
         }
+        signals: [
+          {
+            // Recommended AMW metric (ahm-signal-manifest): ingestion rate vs. limit.
+            signalKind: 'AzureResourceMetric'
+            name: 'events-ingested-utilization'
+            displayName: 'Events/min ingested utilization %'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Percent'
+            metricNamespace: 'microsoft.monitor/accounts'
+            metricName: 'EventsPerMinuteIngestedPercentUtilization'
+            timeGrain: 'PT5M'
+            aggregationType: 'Average'
+            evaluationRules: {
+              unhealthyRule: {
+                operator: 'GreaterThan'
+                threshold: 75
+              }
+            }
+          }
+          {
+            // Recommended AMW metric (ahm-signal-manifest): active time series vs. limit.
+            signalKind: 'AzureResourceMetric'
+            name: 'active-timeseries-utilization'
+            displayName: 'Active time series utilization %'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Percent'
+            metricNamespace: 'microsoft.monitor/accounts'
+            metricName: 'ActiveTimeSeriesPercentUtilization'
+            timeGrain: 'PT5M'
+            aggregationType: 'Average'
+            evaluationRules: {
+              unhealthyRule: {
+                operator: 'GreaterThan'
+                threshold: 85
+              }
+            }
+          }
+        ]
       }
       azureMonitorWorkspace: {
         authenticationSetting: authSetting.name
@@ -562,6 +705,50 @@ resource amwEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-previ
   }
 }
 
+// ---- Infra entity: Azure subscription (hosts the AKS cluster; capacity/quota source) --------
+// The vCPU-quota signal runs an Azure Resource Graph query via the KQL `arg("")` operator, so it
+// lives in the Log Analytics signal group (there is no native Resource Graph signal kind).
+resource subscriptionEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-preview' = {
+  parent: healthModel
+  name: 'subscription'
+  properties: {
+    displayName: 'Azure subscription'
+    impact: 'Standard'
+    healthObjective: 99
+    canvasPosition: {
+      x: -300
+      y: 800
+    }
+    signalGroups: {
+      azureLogAnalytics: {
+        authenticationSetting: authSetting.name
+        logAnalyticsWorkspaceResourceId: logAnalyticsWorkspaceId
+        signals: [
+          {
+            signalKind: 'LogAnalyticsQuery'
+            name: 'subscription-vcpu-quota'
+            displayName: 'Subscription vCPU quota usage'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Percent'
+            queryText: 'arg("").QuotaResources\n| where subscriptionId =~ \'${subscription().subscriptionId}\'\n| where type =~ \'microsoft.compute/locations/usages\'\n| where location in~ (\'${resourceGroup().location}\')\n| mv-expand quota = properties.value limit 2000\n| extend currentValue = tolong(quota.currentValue)\n| extend quotaLimit = tolong(quota[\'limit\'])\n| where quotaLimit > 0\n| where currentValue > 0\n| extend usagePercent = todouble(currentValue) * 100.0 / todouble(quotaLimit)\n| summarize usagePercent = max(usagePercent)'
+            valueColumnName: 'usagePercent'
+            evaluationRules: {
+              degradedRule: {
+                operator: 'GreaterThanOrEqual'
+                threshold: 70
+              }
+              unhealthyRule: {
+                operator: 'GreaterThanOrEqual'
+                threshold: 90
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+
 // ---- Relationships: root -> groups -> services -> AKS -> LAW/AMW -----------------------------
 resource entityRelationships 'Microsoft.CloudHealth/healthmodels/relationships@2026-05-01-preview' = [
   for rel in relationships: {
@@ -579,6 +766,7 @@ resource entityRelationships 'Microsoft.CloudHealth/healthmodels/relationships@2
       lawEntity
       aksEntity
       amwEntity
+      subscriptionEntity
     ]
   }
 ]
