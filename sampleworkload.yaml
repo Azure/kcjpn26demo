@@ -1,0 +1,269 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: loadgen
+  labels:
+    app.kubernetes.io/name: loadgen
+# controlplane -----------------------------------------------------------------
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: controlplane
+  namespace: loadgen
+  labels:
+    app: controlplane
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: controlplane
+  template:
+    metadata:
+      labels:
+        app: controlplane
+    spec:
+      containers:
+        - name: controlplane
+          image: mcr.microsoft.com/mirror/docker/library/busybox:1.36
+          # Alternate between random busy (CPU-burning) and idle periods so per-pod CPU
+          # utilization fluctuates. The HPA below reacts to this and scales the Deployment
+          # in and out, which in turn drives NAP (Karpenter) to add/remove nodes.
+          command:
+            - /bin/sh
+            - -c
+            - |
+              while true; do
+                BUSY=$(( (RANDOM % 50) + 10 ))
+                END=$(( $(date +%s) + BUSY ))
+                while [ "$(date +%s)" -lt "$END" ]; do :; done
+                IDLE=$(( (RANDOM % 50) + 10 ))
+                sleep "$IDLE"
+              done
+          resources:
+            requests:
+              cpu: 200m
+              memory: 64Mi
+            limits:
+              cpu: "1"
+              memory: 128Mi
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: controlplane
+  namespace: loadgen
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: controlplane
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 50
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+    scaleDown:
+      stabilizationWindowSeconds: 60
+# rulesexecution ---------------------------------------------------------------
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rulesexecution
+  namespace: loadgen
+  labels:
+    app: rulesexecution
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: rulesexecution
+  template:
+    metadata:
+      labels:
+        app: rulesexecution
+    spec:
+      containers:
+        - name: rulesexecution
+          image: mcr.microsoft.com/mirror/docker/library/busybox:1.36
+          command:
+            - /bin/sh
+            - -c
+            - |
+              while true; do
+                BUSY=$(( (RANDOM % 50) + 10 ))
+                END=$(( $(date +%s) + BUSY ))
+                while [ "$(date +%s)" -lt "$END" ]; do :; done
+                IDLE=$(( (RANDOM % 50) + 10 ))
+                sleep "$IDLE"
+              done
+          resources:
+            requests:
+              cpu: 200m
+              memory: 64Mi
+            limits:
+              cpu: "1"
+              memory: 128Mi
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: rulesexecution
+  namespace: loadgen
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: rulesexecution
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 50
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+    scaleDown:
+      stabilizationWindowSeconds: 60
+# backgroundprocessor ----------------------------------------------------------
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backgroundprocessor
+  namespace: loadgen
+  labels:
+    app: backgroundprocessor
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backgroundprocessor
+  template:
+    metadata:
+      labels:
+        app: backgroundprocessor
+    spec:
+      containers:
+        - name: backgroundprocessor
+          image: mcr.microsoft.com/mirror/docker/library/busybox:1.36
+          command:
+            - /bin/sh
+            - -c
+            - |
+              while true; do
+                BUSY=$(( (RANDOM % 50) + 10 ))
+                END=$(( $(date +%s) + BUSY ))
+                while [ "$(date +%s)" -lt "$END" ]; do :; done
+                IDLE=$(( (RANDOM % 50) + 10 ))
+                sleep "$IDLE"
+              done
+          resources:
+            requests:
+              cpu: 200m
+              memory: 64Mi
+            limits:
+              cpu: "1"
+              memory: 128Mi
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backgroundprocessor
+  namespace: loadgen
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: backgroundprocessor
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 50
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+    scaleDown:
+      stabilizationWindowSeconds: 60
+# alertshandler ----------------------------------------------------------------
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertshandler
+  namespace: loadgen
+  labels:
+    app: alertshandler
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: alertshandler
+  template:
+    metadata:
+      labels:
+        app: alertshandler
+    spec:
+      containers:
+        - name: alertshandler
+          image: mcr.microsoft.com/mirror/docker/library/busybox:1.36
+          command:
+            - /bin/sh
+            - -c
+            - |
+              while true; do
+                BUSY=$(( (RANDOM % 50) + 10 ))
+                END=$(( $(date +%s) + BUSY ))
+                while [ "$(date +%s)" -lt "$END" ]; do :; done
+                IDLE=$(( (RANDOM % 50) + 10 ))
+                sleep "$IDLE"
+              done
+          resources:
+            requests:
+              cpu: 200m
+              memory: 64Mi
+            limits:
+              cpu: "1"
+              memory: 128Mi
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: alertshandler
+  namespace: loadgen
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: alertshandler
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 50
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+    scaleDown:
+      stabilizationWindowSeconds: 60

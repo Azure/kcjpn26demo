@@ -1,0 +1,454 @@
+@description('Azure region for the health model resource.')
+param location string
+
+@description('Name of the health model resource (3-44 chars, alphanumeric + hyphen).')
+param healthModelName string
+
+@description('Resource ID of the AKS cluster to model.')
+param aksResourceId string
+
+@description('Resource ID of the Log Analytics workspace (KQL signals).')
+param logAnalyticsWorkspaceId string
+
+@description('Resource ID of the Azure Monitor workspace (PromQL signals).')
+param azureMonitorWorkspaceId string
+
+// ---- Simulated services (each maps to a Deployment in the `loadgen` namespace) --------------
+// Modeled as child entities of the root node. See sampleworkload.yaml for the workloads.
+var services = [
+  {
+    name: 'controlplane'
+    displayName: 'Control plane'
+    x: -300
+  }
+  {
+    name: 'rulesexecution'
+    displayName: 'Rules execution'
+    x: -100
+  }
+  {
+    name: 'backgroundprocessor'
+    displayName: 'Background processor'
+    x: 100
+  }
+  {
+    name: 'alertshandler'
+    displayName: 'Alerts handler'
+    x: 300
+  }
+]
+
+// ---- Logical grouping entities (pure roll-up nodes between the root and the services) --------
+var logicalGroups = [
+  {
+    name: 'crud'
+    displayName: 'CRUD'
+    x: -300
+  }
+  {
+    name: 'signal-evaluation'
+    displayName: 'Signal evaluation'
+    x: 0
+  }
+  {
+    name: 'alerting'
+    displayName: 'Alerting'
+    x: 300
+  }
+]
+
+// ---- Explicit parent -> child edges for the health model graph -------------------------------
+var relationships = [
+  {
+    parent: healthModelName
+    child: 'crud'
+    kind: 'DependsOn'
+  }
+  {
+    parent: healthModelName
+    child: 'signal-evaluation'
+    kind: 'DependsOn'
+  }
+  {
+    parent: healthModelName
+    child: 'alerting'
+    kind: 'DependsOn'
+  }
+  {
+    parent: 'crud'
+    child: 'controlplane'
+    kind: 'IsHostedOn'
+  }
+  {
+    parent: 'signal-evaluation'
+    child: 'rulesexecution'
+    kind: 'IsHostedOn'
+  }
+  {
+    parent: 'signal-evaluation'
+    child: 'backgroundprocessor'
+    kind: 'IsHostedOn'
+  }
+  {
+    parent: 'alerting'
+    child: 'alertshandler'
+    kind: 'IsHostedOn'
+  }
+  {
+    parent: 'backgroundprocessor'
+    child: 'alertshandler'
+    kind: 'SendsTelemetryTo'
+  }
+  {
+    parent: 'controlplane'
+    child: 'aks-cluster'
+    kind: 'IsHostedOn'
+  }
+  {
+    parent: 'rulesexecution'
+    child: 'aks-cluster'
+    kind: 'IsHostedOn'
+  }
+  {
+    parent: 'backgroundprocessor'
+    child: 'aks-cluster'
+    kind: 'IsHostedOn'
+  }
+  {
+    parent: 'alertshandler'
+    child: 'aks-cluster'
+    kind: 'IsHostedOn'
+  }
+  {
+    parent: 'aks-cluster'
+    child: 'law'
+    kind: 'SendsLogsTo'
+  }
+  {
+    parent: 'aks-cluster'
+    child: 'amw'
+    kind: 'SendsMetricsTo'
+  }
+]
+
+resource healthModel 'Microsoft.CloudHealth/healthmodels@2026-05-01-preview' = {
+  name: healthModelName
+  location: location
+  identity: {
+    type: 'SystemAssigned'
+  }
+  properties: {}
+}
+
+resource authSetting 'Microsoft.CloudHealth/healthmodels/authenticationsettings@2026-05-01-preview' = {
+  parent: healthModel
+  name: 'default'
+  properties: {
+    authenticationKind: 'ManagedIdentity'
+    displayName: 'Health model system-assigned identity'
+    managedIdentityName: 'SystemAssigned'
+  }
+}
+
+// ---- Root entity: the overall system (name matches the health model) -------------------------
+resource rootEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-preview' = {
+  parent: healthModel
+  name: healthModelName
+  properties: {
+    displayName: healthModelName
+    impact: 'Standard'
+    healthObjective: 99
+    canvasPosition: {
+      x: 0
+      y: 0
+    }
+  }
+}
+
+// ---- Service entities: children of the root, each attached to AKS + LAW + AMW ----------------
+resource serviceEntities 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-preview' = [
+  for svc in services: {
+    parent: healthModel
+    name: svc.name
+    properties: {
+      displayName: svc.displayName
+      impact: 'Standard'
+      healthObjective: 99
+      canvasPosition: {
+        x: svc.x
+        y: 400
+      }
+      signalGroups: {
+        // Azure resource (AKS cluster) metrics + Azure Resource Health.
+        azureResource: {
+          authenticationSetting: authSetting.name
+          azureResourceId: aksResourceId
+          resourceHealth: {
+            enabled: 'Enabled'
+          }
+          signals: [
+            {
+              signalKind: 'AzureResourceMetric'
+              name: 'node-cpu-usage'
+              displayName: 'Node CPU usage %'
+              refreshInterval: 'PT5M'
+              dataUnit: 'Percent'
+              metricNamespace: 'microsoft.containerservice/managedclusters'
+              metricName: 'node_cpu_usage_percentage'
+              timeGrain: 'PT5M'
+              aggregationType: 'Average'
+              evaluationRules: {
+                degradedRule: {
+                  operator: 'GreaterThan'
+                  threshold: 80
+                }
+                unhealthyRule: {
+                  operator: 'GreaterThan'
+                  threshold: 95
+                }
+              }
+            }
+          ]
+        }
+        // Container Insights (Log Analytics): running pods for this service's Deployment.
+        azureLogAnalytics: {
+          authenticationSetting: authSetting.name
+          logAnalyticsWorkspaceResourceId: logAnalyticsWorkspaceId
+          signals: [
+            {
+              signalKind: 'LogAnalyticsQuery'
+              name: 'running-pods'
+              displayName: 'Running pods'
+              refreshInterval: 'PT5M'
+              dataUnit: 'Count'
+              queryText: 'KubePodInventory | where Namespace == "loadgen" | where ControllerName startswith "${svc.name}" | summarize arg_max(TimeGenerated, PodStatus) by Name | summarize RunningPods = countif(PodStatus == "Running")'
+              timeGrain: 'PT10M'
+              valueColumnName: 'RunningPods'
+              evaluationRules: {
+                degradedRule: {
+                  operator: 'LessThan'
+                  threshold: 2
+                }
+                unhealthyRule: {
+                  operator: 'LessThan'
+                  threshold: 1
+                }
+              }
+            }
+          ]
+        }
+        // Managed Prometheus (Azure Monitor workspace): available replicas for this Deployment.
+        azureMonitorWorkspace: {
+          authenticationSetting: authSetting.name
+          azureMonitorWorkspaceResourceId: azureMonitorWorkspaceId
+          signals: [
+            {
+              signalKind: 'PrometheusMetricsQuery'
+              name: 'available-replicas'
+              displayName: 'Available replicas (Prometheus)'
+              refreshInterval: 'PT5M'
+              dataUnit: 'Count'
+              queryText: 'sum(kube_deployment_status_replicas_available{deployment="${svc.name}"})'
+              timeGrain: 'PT5M'
+              evaluationRules: {
+                degradedRule: {
+                  operator: 'LessThan'
+                  threshold: 2
+                }
+                unhealthyRule: {
+                  operator: 'LessThan'
+                  threshold: 1
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+]
+
+// ---- Logical grouping entities: children of the root, parents of the services ----------------
+resource logicalEntities 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-preview' = [
+  for grp in logicalGroups: {
+    parent: healthModel
+    name: grp.name
+    properties: {
+      displayName: grp.displayName
+      impact: 'Standard'
+      healthObjective: 99
+      canvasPosition: {
+        x: grp.x
+        y: 200
+      }
+    }
+  }
+]
+
+// ---- Data-source entity: Log Analytics workspace ---------------------------------------------
+// Attached to the LAW Azure resource (Resource Health) + a Heartbeat-freshness KQL signal.
+resource lawEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-preview' = {
+  parent: healthModel
+  name: 'law'
+  properties: {
+    displayName: 'Log Analytics workspace'
+    impact: 'Standard'
+    healthObjective: 99
+    canvasPosition: {
+      x: 300
+      y: 800
+    }
+    signalGroups: {
+      azureResource: {
+        authenticationSetting: authSetting.name
+        azureResourceId: logAnalyticsWorkspaceId
+        resourceHealth: {
+          enabled: 'Enabled'
+        }
+      }
+      azureLogAnalytics: {
+        authenticationSetting: authSetting.name
+        logAnalyticsWorkspaceResourceId: logAnalyticsWorkspaceId
+        signals: [
+          {
+            signalKind: 'LogAnalyticsQuery'
+            name: 'ingestion-heartbeat'
+            displayName: 'Minutes since last heartbeat'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Count'
+            queryText: 'Heartbeat | summarize MinutesSinceLastHeartbeat = datetime_diff("minute", now(), max(TimeGenerated))'
+            timeGrain: 'PT15M'
+            valueColumnName: 'MinutesSinceLastHeartbeat'
+            evaluationRules: {
+              degradedRule: {
+                operator: 'GreaterThan'
+                threshold: 15
+              }
+              unhealthyRule: {
+                operator: 'GreaterThan'
+                threshold: 30
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+
+// ---- Infra entity: AKS cluster (hosts the services, feeds LAW + AMW) -------------------------
+resource aksEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-preview' = {
+  parent: healthModel
+  name: 'aks-cluster'
+  properties: {
+    displayName: 'AKS cluster'
+    impact: 'Standard'
+    healthObjective: 99
+    canvasPosition: {
+      x: 0
+      y: 600
+    }
+    signalGroups: {
+      azureResource: {
+        authenticationSetting: authSetting.name
+        azureResourceId: aksResourceId
+        resourceHealth: {
+          enabled: 'Enabled'
+        }
+        signals: [
+          {
+            signalKind: 'AzureResourceMetric'
+            name: 'node-cpu-usage'
+            displayName: 'Node CPU usage %'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Percent'
+            metricNamespace: 'microsoft.containerservice/managedclusters'
+            metricName: 'node_cpu_usage_percentage'
+            timeGrain: 'PT5M'
+            aggregationType: 'Average'
+            evaluationRules: {
+              degradedRule: {
+                operator: 'GreaterThan'
+                threshold: 80
+              }
+              unhealthyRule: {
+                operator: 'GreaterThan'
+                threshold: 95
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+
+// ---- Data-source entity: Azure Monitor workspace (managed Prometheus) ------------------------
+resource amwEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-preview' = {
+  parent: healthModel
+  name: 'amw'
+  properties: {
+    displayName: 'Azure Monitor workspace'
+    impact: 'Standard'
+    healthObjective: 99
+    canvasPosition: {
+      x: 600
+      y: 800
+    }
+    signalGroups: {
+      azureResource: {
+        authenticationSetting: authSetting.name
+        azureResourceId: azureMonitorWorkspaceId
+        resourceHealth: {
+          enabled: 'Enabled'
+        }
+      }
+      azureMonitorWorkspace: {
+        authenticationSetting: authSetting.name
+        azureMonitorWorkspaceResourceId: azureMonitorWorkspaceId
+        signals: [
+          {
+            signalKind: 'PrometheusMetricsQuery'
+            name: 'scrape-targets-up'
+            displayName: 'Healthy scrape targets'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Count'
+            queryText: 'count(up == 1)'
+            timeGrain: 'PT5M'
+            evaluationRules: {
+              unhealthyRule: {
+                operator: 'LessThan'
+                threshold: 1
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+
+// ---- Relationships: root -> groups -> services -> AKS -> LAW/AMW -----------------------------
+resource entityRelationships 'Microsoft.CloudHealth/healthmodels/relationships@2026-05-01-preview' = [
+  for rel in relationships: {
+    parent: healthModel
+    name: '${rel.parent}-${rel.child}'
+    properties: {
+      displayName: rel.kind
+      parentEntityName: rel.parent
+      childEntityName: rel.child
+    }
+    dependsOn: [
+      rootEntity
+      serviceEntities
+      logicalEntities
+      lawEntity
+      aksEntity
+      amwEntity
+    ]
+  }
+]
+
+output healthModelName string = healthModel.name
+@description('Principal ID of the health model system-assigned identity (needs reader roles to query data sources).')
+output principalId string = healthModel.identity.principalId
