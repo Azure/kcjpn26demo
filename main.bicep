@@ -24,6 +24,9 @@ var roleIds = {
   monitoringDataReader: 'b0d8363b-8ddd-447d-831f-62ca05bff136'
 }
 
+// Network Contributor — required by the AKS/NAP identity to provision nodes into the custom VNet.
+var networkContributorRoleId = '4d97b98b-1d4f-4787-a291-c67834d212e7'
+
 // ---- Infrastructure ---------------------------------------------------------------------------
 module network './modules/network.bicep' = {
   params: {
@@ -87,6 +90,24 @@ resource dataReaderRoles 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
     }
   }
 ]
+
+// ---- Grant the AKS/NAP identity Network Contributor on the custom VNet ------------------------
+// NAP (Karpenter) provisions nodes into this BYO subnet using the cluster's control-plane
+// identity. Without Network Contributor here the AKSNodeClass reports SubnetsReady=False and no
+// nodes are created. Scoped to the VNet (covers the aks subnet by inheritance).
+resource vnet 'Microsoft.Network/virtualNetworks@2024-10-01' existing = {
+  name: vnetName
+}
+
+resource napNetworkContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(vnet.id, aksName, networkContributorRoleId)
+  scope: vnet
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', networkContributorRoleId)
+    principalId: aks.outputs.aksIdentityPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
 
 output aksClusterName string = aks.outputs.aksName
 output healthModelResourceName string = healthModel.outputs.healthModelName

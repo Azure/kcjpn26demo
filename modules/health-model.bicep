@@ -539,6 +539,36 @@ resource aksEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-previ
           }
         ]
       }
+      // Container Insights (Log Analytics): NAP/Karpenter provisioning health from KubeEvents.
+      azureLogAnalytics: {
+        authenticationSetting: authSetting.name
+        logAnalyticsWorkspaceResourceId: logAnalyticsWorkspaceId
+        signals: [
+          {
+            // When NAP/Karpenter can't satisfy pending pods (quota, SKU availability, zone
+            // constraints), kube-scheduler emits a `FailedScheduling` Warning event per pod.
+            // A sustained stream means NAP isn't provisioning the capacity the pods need.
+            signalKind: 'LogAnalyticsQuery'
+            name: 'nap-scheduling-failures'
+            displayName: 'Pod scheduling failures (15m)'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Count'
+            queryText: 'KubeEvents | where TimeGenerated > ago(15m) | where KubeEventType == "Warning" | where Reason == "FailedScheduling" | where Namespace == "loadgen" | count'
+            timeGrain: 'PT15M'
+            valueColumnName: 'Count'
+            evaluationRules: {
+              degradedRule: {
+                operator: 'GreaterThan'
+                threshold: 5
+              }
+              unhealthyRule: {
+                operator: 'GreaterThan'
+                threshold: 20
+              }
+            }
+          }
+        ]
+      }
       // Managed Prometheus: node memory pressure, unready nodes and pending pods.
       azureMonitorWorkspace: {
         authenticationSetting: authSetting.name
@@ -594,6 +624,51 @@ resource aksEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-previ
               unhealthyRule: {
                 operator: 'GreaterThan'
                 threshold: 10
+              }
+            }
+          }
+          {
+            // NAP/Karpenter monitoring. Requires AKS control plane metrics (preview): the
+            // `controlplane-kube-scheduler` default target scrapes `scheduler_unschedulable_pods`.
+            // Pods the scheduler can't place are what drive NAP to add nodes; a sustained
+            // non-zero count means NAP is failing to keep up with demand.
+            signalKind: 'PrometheusMetricsQuery'
+            name: 'nap-unschedulable-pods'
+            displayName: 'Unschedulable pods (scheduler)'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Count'
+            queryText: 'sum(scheduler_unschedulable_pods)'
+            timeGrain: 'PT5M'
+            evaluationRules: {
+              degradedRule: {
+                operator: 'GreaterThan'
+                threshold: 3
+              }
+              unhealthyRule: {
+                operator: 'GreaterThan'
+                threshold: 10
+              }
+            }
+          }
+          {
+            // NAP/Karpenter monitoring. Requires AKS control plane metrics (preview): the
+            // `controlplane-node-auto-provisioning` target scrapes `karpenter_nodes_created_total`.
+            // High sustained node-creation churn can indicate provisioning/consolidation thrashing.
+            signalKind: 'PrometheusMetricsQuery'
+            name: 'nap-node-churn'
+            displayName: 'NAP nodes created (1h)'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Count'
+            queryText: 'sum(increase(karpenter_nodes_created_total[1h]))'
+            timeGrain: 'PT5M'
+            evaluationRules: {
+              degradedRule: {
+                operator: 'GreaterThan'
+                threshold: 20
+              }
+              unhealthyRule: {
+                operator: 'GreaterThan'
+                threshold: 50
               }
             }
           }

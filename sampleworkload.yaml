@@ -23,6 +23,16 @@ spec:
       labels:
         app: controlplane
     spec:
+      # Pin to the dedicated `workload` Karpenter NodePool (see nodepools.yaml):
+      # nodeSelector keeps these pods off the System/default pools, and the toleration
+      # allows them onto the workload pool's tainted nodes.
+      nodeSelector:
+        workload: apps
+      tolerations:
+        - key: workload
+          operator: Equal
+          value: apps
+          effect: NoSchedule
       containers:
         - name: controlplane
           image: mcr.microsoft.com/azurelinux/busybox:1.36
@@ -91,6 +101,13 @@ spec:
       labels:
         app: rulesexecution
     spec:
+      nodeSelector:
+        workload: apps
+      tolerations:
+        - key: workload
+          operator: Equal
+          value: apps
+          effect: NoSchedule
       containers:
         - name: rulesexecution
           image: mcr.microsoft.com/azurelinux/busybox:1.36
@@ -156,6 +173,13 @@ spec:
       labels:
         app: backgroundprocessor
     spec:
+      nodeSelector:
+        workload: apps
+      tolerations:
+        - key: workload
+          operator: Equal
+          value: apps
+          effect: NoSchedule
       containers:
         - name: backgroundprocessor
           image: mcr.microsoft.com/azurelinux/busybox:1.36
@@ -221,6 +245,13 @@ spec:
       labels:
         app: alertshandler
     spec:
+      nodeSelector:
+        workload: apps
+      tolerations:
+        - key: workload
+          operator: Equal
+          value: apps
+          effect: NoSchedule
       containers:
         - name: alertshandler
           image: mcr.microsoft.com/azurelinux/busybox:1.36

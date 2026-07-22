@@ -34,6 +34,9 @@ resource vnet 'Microsoft.Network/virtualNetworks@2024-10-01' = {
         name: aksSubnetName
         properties: {
           addressPrefix: aksSubnetPrefix
+          // Disable the (retiring) implicit default outbound access. AKS provides explicit
+          // egress via its standard load balancer, so nodes don't rely on default outbound.
+          defaultOutboundAccess: false
           networkSecurityGroup: {
             id: aksNsg.id
           }

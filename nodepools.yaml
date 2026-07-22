@@ -1,0 +1,76 @@
+# Karpenter NodePool CRDs for Node Auto-Provisioning (NAP).
+#
+# NAP itself already creates two managed NodePools when the cluster is deployed with
+# `nodeProvisioningProfile.defaultNodePools: 'Auto'` (see modules/aks.bicep):
+#   - default       : general on-demand capacity.
+#   - system-surge  : lets the System pool (systempool) scale out for system/add-on pods.
+#
+# This file adds a dedicated, tainted `workload` NodePool so the sample workload
+# (sampleworkload.yaml) runs on its own nodes, isolated from the system pool and the
+# default pool. Apply it with:
+#
+#   kubectl apply -f nodepools.yaml
+#
+# The `workload` NodePool reuses the `default` AKSNodeClass that NAP provisions
+# automatically (referenced via nodeClassRef.name: default).
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: workload
+spec:
+  # Prefer this pool over `default` (weight 0) when a pod tolerates the taint below.
+  weight: 20
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 30s
+  template:
+    metadata:
+      # Nodes provisioned by this pool carry this label; the sample workload pins to it
+      # with `nodeSelector: { workload: apps }` so it can only land here.
+      labels:
+        workload: apps
+        # Required so Karpenter/NAP correctly predicts the Cilium DaemonSet overhead on
+        # this cluster (Azure CNI overlay + Cilium dataplane); otherwise nodes can be
+        # sized too small. See Azure/karpenter-provider-azure examples.
+        kubernetes.azure.com/ebpf-dataplane: cilium
+    spec:
+      nodeClassRef:
+        group: karpenter.azure.com
+        kind: AKSNodeClass
+        name: default
+      expireAfter: Never
+      # Taint the nodes so only pods that explicitly tolerate `workload=apps` schedule here.
+      taints:
+        - key: workload
+          value: apps
+          effect: NoSchedule
+      # Cilium startup taint: keep pods off the node until the Cilium agent is ready.
+      # Karpenter/NAP removes it automatically once the dataplane comes up.
+      startupTaints:
+        - key: node.cilium.io/agent-not-ready
+          effect: NoExecute
+          value: "true"
+      requirements:
+        - key: kubernetes.io/arch
+          operator: In
+          values:
+            - amd64
+            - arm64
+        - key: kubernetes.io/os
+          operator: In
+          values:
+            - linux
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values:
+            - on-demand
+        - key: karpenter.azure.com/sku-family
+          operator: In
+          values:
+            - D
+            - E
+            - F
+  limits:
+    cpu: "100"
+    memory: 200Gi

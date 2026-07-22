@@ -45,8 +45,13 @@ resource aks 'Microsoft.ContainerService/managedClusters@2026-04-02-preview' = {
     // SFI (Safe Secrets): disable local admin accounts so cluster access is Entra-only.
     disableLocalAccounts: false
     // Enable NAP: node pools are provisioned on demand by Karpenter.
+    // `defaultNodePools: 'Auto'` makes NAP create its two standard Karpenter NodePools:
+    //   - `default`      : general on-demand capacity for user workloads.
+    //   - `system-surge` : lets the System pool scale out beyond `systempool` when
+    //                      system/critical add-on pods can't be scheduled.
     nodeProvisioningProfile: {
       mode: 'Auto'
+      defaultNodePools: 'Auto'
     }
     agentPoolProfiles: [
       {
@@ -143,3 +148,6 @@ resource aksDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-previe
 
 output aksId string = aks.id
 output aksName string = aks.name
+
+@description('Principal ID of the AKS cluster (control-plane) system-assigned identity. NAP uses it to provision nodes into the subnet, so it needs Network Contributor on a custom VNet.')
+output aksIdentityPrincipalId string = aks.identity.principalId
