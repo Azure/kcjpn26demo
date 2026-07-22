@@ -386,26 +386,7 @@ resource lawEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-previ
         resourceHealth: {
           enabled: 'Enabled'
         }
-        signals: [
-          {
-            // Recommended workspace metric (ahm-signal-manifest): agent heartbeat count.
-            signalKind: 'AzureResourceMetric'
-            name: 'heartbeat-count'
-            displayName: 'Heartbeat count'
-            refreshInterval: 'PT5M'
-            dataUnit: 'Count'
-            metricNamespace: 'microsoft.operationalinsights/workspaces'
-            metricName: 'Heartbeat'
-            timeGrain: 'PT5M'
-            aggregationType: 'Total'
-            evaluationRules: {
-              unhealthyRule: {
-                operator: 'LessThanOrEqual'
-                threshold: 0
-              }
-            }
-          }
-        ]
+        signals: []
       }
       azureLogAnalytics: {
         authenticationSetting: authSetting.name
@@ -483,6 +464,7 @@ resource aksEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-previ
             metricName: 'node_cpu_usage_percentage'
             timeGrain: 'PT5M'
             aggregationType: 'Average'
+            dimensionFilter: 'nodepool eq \'*\''
             evaluationRules: {
               degradedRule: {
                 operator: 'GreaterThan'
@@ -504,6 +486,7 @@ resource aksEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-previ
             metricName: 'node_memory_working_set_percentage'
             timeGrain: 'PT5M'
             aggregationType: 'Average'
+            dimensionFilter: 'nodepool eq \'*\''
             evaluationRules: {
               unhealthyRule: {
                 operator: 'GreaterThan'
@@ -521,6 +504,7 @@ resource aksEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-previ
             metricName: 'node_memory_rss_percentage'
             timeGrain: 'PT15M'
             aggregationType: 'Average'
+            dimensionFilter: 'nodepool eq \'*\''
             evaluationRules: {
               degradedRule: {
                 operator: 'GreaterThan'
@@ -542,6 +526,7 @@ resource aksEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-previ
             metricName: 'node_disk_usage_percentage'
             timeGrain: 'PT15M'
             aggregationType: 'Average'
+            dimensionFilter: 'nodepool eq \'*\''
             evaluationRules: {
               degradedRule: {
                 operator: 'GreaterThan'
