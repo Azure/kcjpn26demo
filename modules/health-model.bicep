@@ -277,7 +277,7 @@ resource serviceEntities 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01
                 }
                 unhealthyRule: {
                   operator: 'GreaterThan'
-                  threshold: 2
+                  threshold: 4
                 }
               }
             }
