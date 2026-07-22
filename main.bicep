@@ -8,6 +8,9 @@ param location string = 'eastasia'
 @maxLength(12)
 param namePrefix string = 'kcjpn'
 
+@description('Email address that receives alert notifications via the action group.')
+param alertEmailAddress string
+
 // ---- Names ------------------------------------------------------------------------------------
 var vnetName = '${namePrefix}-vnet'
 var lawName = '${namePrefix}-law'
@@ -15,6 +18,7 @@ var amwName = '${namePrefix}-amw'
 var aksName = '${namePrefix}-aks'
 var dnsPrefix = '${namePrefix}aks'
 var healthModelName = '${namePrefix}-health'
+var actionGroupName = '${namePrefix}-alerts-ag'
 
 // ---- Built-in role definition IDs -------------------------------------------------------------
 var roleIds = {
@@ -106,6 +110,15 @@ resource napNetworkContributor 'Microsoft.Authorization/roleAssignments@2022-04-
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', networkContributorRoleId)
     principalId: aks.outputs.aksIdentityPrincipalId
     principalType: 'ServicePrincipal'
+  }
+}
+
+// ---- Alerts action group ----------------------------------------------------------------------
+module actionGroup './modules/action-group.bicep' = {
+  params: {
+    actionGroupName: actionGroupName
+    shortName: 'kcjpnalerts'
+    emailAddress: alertEmailAddress
   }
 }
 
