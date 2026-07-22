@@ -210,7 +210,7 @@ resource serviceEntities 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01
             }
           ]
         }
-        // Container Insights (Log Analytics): running pods for this service's Deployment.
+        // Container Insights (Log Analytics): running pods + restart count for this Deployment.
         azureLogAnalytics: {
           authenticationSetting: authSetting.name
           logAnalyticsWorkspaceResourceId: logAnalyticsWorkspaceId
@@ -235,9 +235,29 @@ resource serviceEntities 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01
                 }
               }
             }
+            {
+              signalKind: 'LogAnalyticsQuery'
+              name: 'container-restarts'
+              displayName: 'Max container restarts'
+              refreshInterval: 'PT5M'
+              dataUnit: 'Count'
+              queryText: 'KubePodInventory | where Namespace == "loadgen" | where ControllerName startswith "${svc.name}" | summarize Restarts = max(ContainerRestartCount) by Name | summarize MaxRestarts = max(Restarts)'
+              timeGrain: 'PT15M'
+              valueColumnName: 'MaxRestarts'
+              evaluationRules: {
+                degradedRule: {
+                  operator: 'GreaterThan'
+                  threshold: 3
+                }
+                unhealthyRule: {
+                  operator: 'GreaterThan'
+                  threshold: 5
+                }
+              }
+            }
           ]
         }
-        // Managed Prometheus (Azure Monitor workspace): available replicas for this Deployment.
+        // Managed Prometheus (Azure Monitor workspace): available replicas + HPA saturation.
         azureMonitorWorkspace: {
           authenticationSetting: authSetting.name
           azureMonitorWorkspaceResourceId: azureMonitorWorkspaceId
@@ -258,6 +278,25 @@ resource serviceEntities 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01
                 unhealthyRule: {
                   operator: 'LessThan'
                   threshold: 1
+                }
+              }
+            }
+            {
+              signalKind: 'PrometheusMetricsQuery'
+              name: 'hpa-saturation'
+              displayName: 'HPA saturation %'
+              refreshInterval: 'PT5M'
+              dataUnit: 'Percent'
+              queryText: 'max(kube_horizontalpodautoscaler_status_current_replicas{horizontalpodautoscaler="${svc.name}",namespace="loadgen"}) / max(kube_horizontalpodautoscaler_spec_max_replicas{horizontalpodautoscaler="${svc.name}",namespace="loadgen"}) * 100'
+              timeGrain: 'PT5M'
+              evaluationRules: {
+                degradedRule: {
+                  operator: 'GreaterThan'
+                  threshold: 80
+                }
+                unhealthyRule: {
+                  operator: 'GreaterThan'
+                  threshold: 99
                 }
               }
             }
@@ -330,6 +369,22 @@ resource lawEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-previ
               }
             }
           }
+          {
+            signalKind: 'LogAnalyticsQuery'
+            name: 'ingestion-volume'
+            displayName: 'Container Insights records (15m)'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Count'
+            queryText: 'union isfuzzy=true KubePodInventory, KubeNodeInventory | where TimeGenerated > ago(15m) | count'
+            timeGrain: 'PT15M'
+            valueColumnName: 'Count'
+            evaluationRules: {
+              unhealthyRule: {
+                operator: 'LessThan'
+                threshold: 1
+              }
+            }
+          }
         ]
       }
     }
@@ -379,6 +434,66 @@ resource aksEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-previ
           }
         ]
       }
+      // Managed Prometheus: node memory pressure, unready nodes and pending pods.
+      azureMonitorWorkspace: {
+        authenticationSetting: authSetting.name
+        azureMonitorWorkspaceResourceId: azureMonitorWorkspaceId
+        signals: [
+          {
+            signalKind: 'PrometheusMetricsQuery'
+            name: 'node-memory-util'
+            displayName: 'Node memory utilisation %'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Percent'
+            queryText: 'max(instance:node_memory_utilisation:ratio) * 100'
+            timeGrain: 'PT5M'
+            evaluationRules: {
+              degradedRule: {
+                operator: 'GreaterThan'
+                threshold: 80
+              }
+              unhealthyRule: {
+                operator: 'GreaterThan'
+                threshold: 90
+              }
+            }
+          }
+          {
+            signalKind: 'PrometheusMetricsQuery'
+            name: 'nodes-not-ready'
+            displayName: 'Not-ready nodes'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Count'
+            queryText: 'count(kube_node_status_condition{condition="Ready",status="true"} == 0) or vector(0)'
+            timeGrain: 'PT5M'
+            evaluationRules: {
+              unhealthyRule: {
+                operator: 'GreaterThan'
+                threshold: 0
+              }
+            }
+          }
+          {
+            signalKind: 'PrometheusMetricsQuery'
+            name: 'pending-pods'
+            displayName: 'Pending pods'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Count'
+            queryText: 'count(kube_pod_status_phase{phase="Pending"} == 1) or vector(0)'
+            timeGrain: 'PT5M'
+            evaluationRules: {
+              degradedRule: {
+                operator: 'GreaterThan'
+                threshold: 3
+              }
+              unhealthyRule: {
+                operator: 'GreaterThan'
+                threshold: 10
+              }
+            }
+          }
+        ]
+      }
     }
   }
 }
@@ -419,6 +534,25 @@ resource amwEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-previ
               unhealthyRule: {
                 operator: 'LessThan'
                 threshold: 1
+              }
+            }
+          }
+          {
+            signalKind: 'PrometheusMetricsQuery'
+            name: 'scrape-targets-down'
+            displayName: 'Unhealthy scrape targets'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Count'
+            queryText: 'count(up == 0) or vector(0)'
+            timeGrain: 'PT5M'
+            evaluationRules: {
+              degradedRule: {
+                operator: 'GreaterThan'
+                threshold: 0
+              }
+              unhealthyRule: {
+                operator: 'GreaterThan'
+                threshold: 2
               }
             }
           }

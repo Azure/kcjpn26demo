@@ -82,7 +82,9 @@ resource aks 'Microsoft.ContainerService/managedClusters@2026-04-02-preview' = {
       metrics: {
         enabled: true
         kubeStateMetrics: {
-          metricLabelsAllowlist: ''
+          // Surface pod/deployment labels (e.g. `app`) as Prometheus labels so signals and
+          // recording rules can filter workloads by label instead of name prefixes only.
+          metricLabelsAllowlist: 'pods=[app,kubernetes.io/name],deployments=[app,kubernetes.io/name]'
           metricAnnotationsAllowList: ''
         }
       }
@@ -92,7 +94,7 @@ resource aks 'Microsoft.ContainerService/managedClusters@2026-04-02-preview' = {
 
 // Associate the managed-Prometheus DCR with the cluster so scraped metrics reach the AMW.
 resource prometheusDcra 'Microsoft.Insights/dataCollectionRuleAssociations@2024-03-11' = {
-  name: 'MSProm-${aksName}'
+  name: 'MSProm-${location}-${aksName}'
   scope: aks
   properties: {
     dataCollectionRuleId: prometheusDcrId
@@ -101,11 +103,15 @@ resource prometheusDcra 'Microsoft.Insights/dataCollectionRuleAssociations@2024-
 }
 
 // Send AKS control-plane logs and platform metrics to LAW.
+// `Dedicated` routes control-plane logs into resource-specific tables (AKSAudit,
+// AKSAuditAdmin, AKSControlPlane) instead of the shared AzureDiagnostics table,
+// which is cheaper to query and lets the health model target richer KQL signals.
 resource aksDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
   name: 'aks-to-law'
   scope: aks
   properties: {
     workspaceId: logAnalyticsWorkspaceId
+    logAnalyticsDestinationType: 'Dedicated'
     logs: [
       {
         categoryGroup: 'allLogs'

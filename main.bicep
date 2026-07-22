@@ -52,6 +52,16 @@ module aks './modules/aks.bicep' = {
   }
 }
 
+// ---- Prometheus recording + alert rule groups -------------------------------------------------
+module prometheusRules './modules/prometheus-rules.bicep' = {
+  params: {
+    location: location
+    azureMonitorWorkspaceId: monitoring.outputs.azureMonitorWorkspaceId
+    aksResourceId: aks.outputs.aksId
+    aksClusterName: aks.outputs.aksName
+  }
+}
+
 // ---- Health model -----------------------------------------------------------------------------
 module healthModel './modules/health-model.bicep' = {
   params: {
