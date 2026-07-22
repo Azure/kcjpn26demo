@@ -15,8 +15,8 @@ Prometheus metrics.
 | Dedicated network | `Microsoft.Network/virtualNetworks` (`10.10.0.0/16`, `aks` subnet `10.10.0.0/22`, `defaultOutboundAccess: false`) |
 | Logs | `Microsoft.OperationalInsights/workspaces` (LAW) + Container Insights (omsagent) with a dedicated Container Insights **DCR + DCRA** |
 | Metrics | `Microsoft.Monitor/accounts` (AMW) + managed Prometheus DCE/DCR/DCRA + default & custom **Prometheus rule groups** |
-| Cluster | `Microsoft.ContainerService/managedClusters` — Kubernetes 1.36, NAP `Auto` (default pools `Auto`), Azure CNI **overlay + Cilium**, managed Entra ID + Azure RBAC |
-| Node pools | Bicep `systempool` (System baseline) + NAP-managed `default` / `system-surge` Karpenter pools + a custom `workload` Karpenter `NodePool` (`nodepools.yaml`) |
+| Cluster | `Microsoft.ContainerService/managedClusters` — Kubernetes 1.36, NAP `Auto` (default pools `None`), Azure CNI **overlay + Cilium**, managed Entra ID + Azure RBAC |
+| Node pools | Bicep `systempool` (System baseline) + a custom `workload` Karpenter `NodePool` + `AKSNodeClass` (`nodepools.yaml`); NAP's built-in `default` / `system-surge` pools are **disabled** |
 | Health model | `Microsoft.CloudHealth/healthmodels` — a root entity, three logical groups, four service entities, plus `aks-cluster`, `law`, `amw` and `subscription` entities |
 
 The health model's system-assigned identity is granted **Monitoring Reader**, **Reader**,
@@ -103,15 +103,20 @@ With NAP enabled, node pools are Karpenter `NodePool` CRDs (in-cluster YAML), no
 `agentPoolProfiles`. The layout:
 
 - **`systempool`** — the only Bicep `agentPoolProfile` (mode `System`, 2 nodes); the fixed baseline.
-- **`default`** and **`system-surge`** — created automatically by NAP because the cluster sets
-  `nodeProvisioningProfile.defaultNodePools: 'Auto'`. `system-surge` lets the System pool scale out.
-- **`workload`** — a custom `NodePool` in [`nodepools.yaml`](nodepools.yaml). Its nodes carry the
-  label `workload: apps` and a `workload=apps:NoSchedule` taint, and (because this cluster uses the
+- **`workload`** — a custom `NodePool` + `AKSNodeClass` in [`nodepools.yaml`](nodepools.yaml). Its
+  nodes run Azure Linux (`imageFamily: AzureLinux`, encryption-at-host off), carry the label
+  `workload: apps` and a `workload=apps:NoSchedule` taint, and (because this cluster uses the
   Cilium dataplane) the `kubernetes.azure.com/ebpf-dataplane: cilium` label plus the
   `node.cilium.io/agent-not-ready` startup taint.
 
+NAP's built-in `default` / `system-surge` pools are **disabled**
+(`nodeProvisioningProfile.defaultNodePools: 'None'` in [`modules/aks.bicep`](modules/aks.bicep)), so
+the cluster runs only the `systempool` baseline plus the custom `workload` pool. Note this also
+means the System pool no longer surges beyond its 2 nodes via NAP; add a self-managed system
+NodePool (as the production AHM setup does) if you need that.
+
 The four sample Deployments set `nodeSelector: { workload: apps }` and a matching toleration, so
-they **only** run on the `workload` pool — isolated from the System and `default` pools. Apply
+they **only** run on the `workload` pool — isolated from the System pool. Apply
 `nodepools.yaml` before the workloads.
 
 ## Notes

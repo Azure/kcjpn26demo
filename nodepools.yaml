@@ -1,18 +1,15 @@
-# Karpenter NodePool CRDs for Node Auto-Provisioning (NAP).
+# Karpenter NodePool + AKSNodeClass for Node Auto-Provisioning (NAP).
 #
-# NAP itself already creates two managed NodePools when the cluster is deployed with
-# `nodeProvisioningProfile.defaultNodePools: 'Auto'` (see modules/aks.bicep):
-#   - default       : general on-demand capacity.
-#   - system-surge  : lets the System pool (systempool) scale out for system/add-on pods.
-#
-# This file adds a dedicated, tainted `workload` NodePool so the sample workload
-# (sampleworkload.yaml) runs on its own nodes, isolated from the system pool and the
-# default pool. Apply it with:
+# NAP's built-in `default` / `system-surge` NodePools are DISABLED on this cluster
+# (`nodeProvisioningProfile.defaultNodePools: 'None'` in modules/aks.bicep), so this file
+# defines the only Karpenter NodePool the cluster uses: a dedicated, tainted `workload`
+# pool that runs the sample workload (sampleworkload.yaml) on its own Azure Linux nodes,
+# isolated from the System pool. Apply it with:
 #
 #   kubectl apply -f nodepools.yaml
 #
-# The `workload` NodePool reuses the `default` AKSNodeClass that NAP provisions
-# automatically (referenced via nodeClassRef.name: default).
+# The `workload` NodePool uses the self-managed `workload` AKSNodeClass defined at the
+# bottom of this file (imageFamily: AzureLinux, encryption-at-host off).
 ---
 apiVersion: karpenter.sh/v1
 kind: NodePool
@@ -38,7 +35,7 @@ spec:
       nodeClassRef:
         group: karpenter.azure.com
         kind: AKSNodeClass
-        name: default
+        name: workload
       expireAfter: Never
       # Taint the nodes so only pods that explicitly tolerate `workload=apps` schedule here.
       taints:
@@ -74,3 +71,20 @@ spec:
   limits:
     cpu: "100"
     memory: 200Gi
+---
+# Self-managed node class for the workload pool. Setting imageFamily: AzureLinux makes
+# NAP provision Azure Linux nodes (the NAP auto-created `default` class is Ubuntu).
+# Omitting vnetSubnetID makes it use the cluster's default node subnet.
+apiVersion: karpenter.azure.com/v1beta1
+kind: AKSNodeClass
+metadata:
+  name: workload
+  annotations:
+    kubernetes.io/description: 'Workload node class running Azure Linux nodes'
+spec:
+  imageFamily: AzureLinux
+  security:
+    # Do NOT use encryption at host: the subscription hasn't registered the
+    # Microsoft.Compute/EncryptionAtHost feature, so requesting it makes the VM
+    # create fail with 400 InvalidParameter. Explicitly disable it here.
+    encryptionAtHost: false

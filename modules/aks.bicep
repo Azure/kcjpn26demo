@@ -45,13 +45,12 @@ resource aks 'Microsoft.ContainerService/managedClusters@2026-04-02-preview' = {
     // SFI (Safe Secrets): disable local admin accounts so cluster access is Entra-only.
     disableLocalAccounts: false
     // Enable NAP: node pools are provisioned on demand by Karpenter.
-    // `defaultNodePools: 'Auto'` makes NAP create its two standard Karpenter NodePools:
-    //   - `default`      : general on-demand capacity for user workloads.
-    //   - `system-surge` : lets the System pool scale out beyond `systempool` when
-    //                      system/critical add-on pods can't be scheduled.
+    // `defaultNodePools: 'None'` disables NAP's built-in `default` / `system-surge`
+    // Karpenter NodePools, so the cluster uses only the custom NodePool(s) defined in
+    // nodepools.yaml (plus the `systempool` System baseline below).
     nodeProvisioningProfile: {
       mode: 'Auto'
-      defaultNodePools: 'Auto'
+      defaultNodePools: 'None'
     }
     agentPoolProfiles: [
       {

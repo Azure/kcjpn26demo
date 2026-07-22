@@ -95,11 +95,6 @@ var relationships = [
     kind: 'IsHostedOn'
   }
   {
-    parent: 'backgroundprocessor'
-    child: 'alertshandler'
-    kind: 'SendsTelemetryTo'
-  }
-  {
     parent: 'controlplane'
     child: 'aks-cluster'
     kind: 'IsHostedOn'
@@ -152,6 +147,27 @@ resource authSetting 'Microsoft.CloudHealth/healthmodels/authenticationsettings@
     authenticationKind: 'ManagedIdentity'
     displayName: 'Health model system-assigned identity'
     managedIdentityName: 'SystemAssigned'
+  }
+}
+
+// ---- Discovery rule: auto-discover NAP/Karpenter workload node VMs ----------------------------
+// NAP (Karpenter) provisions node VMs for the `workload` NodePool with names like
+// `aks-workload-<hash>`. This rule finds them via Azure Resource Graph and adds each as an
+// entity with the recommended signals + Azure Resource Health signal attached. The query must
+// return an `id` column containing the resource IDs of the discovered resources.
+resource workloadVmDiscovery 'Microsoft.CloudHealth/healthmodels/discoveryrules@2026-05-01-preview' = {
+  parent: healthModel
+  name: 'workload-node-vms'
+  properties: {
+    displayName: 'Workload node VMs (NAP)'
+    authenticationSetting: authSetting.name
+    discoverRelationships: 'Enabled'
+    addRecommendedSignals: 'Enabled'
+    addResourceHealthSignal: 'Enabled'
+    specification: {
+      kind: 'ResourceGraphQuery'
+      resourceGraphQuery: 'Resources | where type =~ "microsoft.compute/virtualmachines" | where name startswith "aks-workload-" | project id'
+    }
   }
 }
 

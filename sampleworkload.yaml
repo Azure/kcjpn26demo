@@ -36,19 +36,32 @@ spec:
       containers:
         - name: controlplane
           image: mcr.microsoft.com/azurelinux/busybox:1.36
-          # Alternate between random busy (CPU-burning) and idle periods so per-pod CPU
-          # utilization fluctuates. The HPA below reacts to this and scales the Deployment
-          # in and out, which in turn drives NAP (Karpenter) to add/remove nodes.
+          # Time-synchronized load wave: every pod reads the same wall clock, so cluster CPU
+          # demand ramps UP then DOWN over PERIOD seconds. That drives the HPA to scale out on
+          # the way up and scale in on the way down (and NAP/Karpenter to add/remove nodes),
+          # instead of continuously maxing out. Each service uses a different OFFSET so their
+          # peaks are staggered across the period rather than all peaking together.
           command:
             - /bin/sh
             - -c
             - |
+              PERIOD=600      # full ramp-up + ramp-down cycle (seconds)
+              FRAME=10        # control granularity (seconds)
+              OFFSET=0        # phase offset for this service (staggers its peak)
               while true; do
-                BUSY=$(( (RANDOM % 50) + 10 ))
-                END=$(( $(date +%s) + BUSY ))
+                NOW=$(date +%s)
+                POS=$(( (NOW + OFFSET) % PERIOD ))
+                HALF=$(( PERIOD / 2 ))
+                if [ "$POS" -lt "$HALF" ]; then
+                  DUTY=$(( POS * 100 / HALF ))          # ramp up 0 -> 100%
+                else
+                  DUTY=$(( (PERIOD - POS) * 100 / HALF ))  # ramp down 100 -> 0%
+                fi
+                BUSY=$(( FRAME * DUTY / 100 ))
+                END=$(( NOW + BUSY ))
                 while [ "$(date +%s)" -lt "$END" ]; do :; done
-                IDLE=$(( (RANDOM % 50) + 10 ))
-                sleep "$IDLE"
+                IDLE=$(( FRAME - BUSY ))
+                [ "$IDLE" -gt 0 ] && sleep "$IDLE"
               done
           resources:
             requests:
@@ -111,16 +124,28 @@ spec:
       containers:
         - name: rulesexecution
           image: mcr.microsoft.com/azurelinux/busybox:1.36
+          # See controlplane for how this wave works; OFFSET staggers this service's peak.
           command:
             - /bin/sh
             - -c
             - |
+              PERIOD=600      # full ramp-up + ramp-down cycle (seconds)
+              FRAME=10        # control granularity (seconds)
+              OFFSET=150      # phase offset for this service (staggers its peak)
               while true; do
-                BUSY=$(( (RANDOM % 50) + 10 ))
-                END=$(( $(date +%s) + BUSY ))
+                NOW=$(date +%s)
+                POS=$(( (NOW + OFFSET) % PERIOD ))
+                HALF=$(( PERIOD / 2 ))
+                if [ "$POS" -lt "$HALF" ]; then
+                  DUTY=$(( POS * 100 / HALF ))          # ramp up 0 -> 100%
+                else
+                  DUTY=$(( (PERIOD - POS) * 100 / HALF ))  # ramp down 100 -> 0%
+                fi
+                BUSY=$(( FRAME * DUTY / 100 ))
+                END=$(( NOW + BUSY ))
                 while [ "$(date +%s)" -lt "$END" ]; do :; done
-                IDLE=$(( (RANDOM % 50) + 10 ))
-                sleep "$IDLE"
+                IDLE=$(( FRAME - BUSY ))
+                [ "$IDLE" -gt 0 ] && sleep "$IDLE"
               done
           resources:
             requests:
@@ -183,16 +208,28 @@ spec:
       containers:
         - name: backgroundprocessor
           image: mcr.microsoft.com/azurelinux/busybox:1.36
+          # See controlplane for how this wave works; OFFSET staggers this service's peak.
           command:
             - /bin/sh
             - -c
             - |
+              PERIOD=600      # full ramp-up + ramp-down cycle (seconds)
+              FRAME=10        # control granularity (seconds)
+              OFFSET=300      # phase offset for this service (staggers its peak)
               while true; do
-                BUSY=$(( (RANDOM % 50) + 10 ))
-                END=$(( $(date +%s) + BUSY ))
+                NOW=$(date +%s)
+                POS=$(( (NOW + OFFSET) % PERIOD ))
+                HALF=$(( PERIOD / 2 ))
+                if [ "$POS" -lt "$HALF" ]; then
+                  DUTY=$(( POS * 100 / HALF ))          # ramp up 0 -> 100%
+                else
+                  DUTY=$(( (PERIOD - POS) * 100 / HALF ))  # ramp down 100 -> 0%
+                fi
+                BUSY=$(( FRAME * DUTY / 100 ))
+                END=$(( NOW + BUSY ))
                 while [ "$(date +%s)" -lt "$END" ]; do :; done
-                IDLE=$(( (RANDOM % 50) + 10 ))
-                sleep "$IDLE"
+                IDLE=$(( FRAME - BUSY ))
+                [ "$IDLE" -gt 0 ] && sleep "$IDLE"
               done
           resources:
             requests:
@@ -255,16 +292,28 @@ spec:
       containers:
         - name: alertshandler
           image: mcr.microsoft.com/azurelinux/busybox:1.36
+          # See controlplane for how this wave works; OFFSET staggers this service's peak.
           command:
             - /bin/sh
             - -c
             - |
+              PERIOD=600      # full ramp-up + ramp-down cycle (seconds)
+              FRAME=10        # control granularity (seconds)
+              OFFSET=450      # phase offset for this service (staggers its peak)
               while true; do
-                BUSY=$(( (RANDOM % 50) + 10 ))
-                END=$(( $(date +%s) + BUSY ))
+                NOW=$(date +%s)
+                POS=$(( (NOW + OFFSET) % PERIOD ))
+                HALF=$(( PERIOD / 2 ))
+                if [ "$POS" -lt "$HALF" ]; then
+                  DUTY=$(( POS * 100 / HALF ))          # ramp up 0 -> 100%
+                else
+                  DUTY=$(( (PERIOD - POS) * 100 / HALF ))  # ramp down 100 -> 0%
+                fi
+                BUSY=$(( FRAME * DUTY / 100 ))
+                END=$(( NOW + BUSY ))
                 while [ "$(date +%s)" -lt "$END" ]; do :; done
-                IDLE=$(( (RANDOM % 50) + 10 ))
-                sleep "$IDLE"
+                IDLE=$(( FRAME - BUSY ))
+                [ "$IDLE" -gt 0 ] && sleep "$IDLE"
               done
           resources:
             requests:
