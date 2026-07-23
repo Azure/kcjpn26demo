@@ -13,6 +13,12 @@ param logAnalyticsWorkspaceId string
 @description('Resource ID of the Azure Monitor workspace (PromQL signals).')
 param azureMonitorWorkspaceId string
 
+@description('Optional resource ID of an Azure Monitor action group to notify when an entity changes health state. Leave empty to create the alert rules without notifications (still visible in Azure Monitor > Alerts).')
+param actionGroupId string = ''
+
+// Wraps the optional action group into the array shape the entity alert config expects.
+var alertActionGroupIds = empty(actionGroupId) ? [] : [actionGroupId]
+
 // ---- Simulated services (each maps to a Deployment in the `loadgen` namespace) --------------
 // Modeled as child entities of the root node. See sampleworkload.yaml for the workloads.
 var services = [
@@ -189,6 +195,48 @@ resource rootEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-prev
       x: 0
       y: 0
     }
+    // Fire an Azure Monitor alert (optionally to an action group) when overall system health drops.
+    alerts: {
+      degraded: {
+        severity: 'Sev2'
+        description: 'Overall system health is degraded — one or more subsystems are not fully healthy.'
+        actionGroupIds: alertActionGroupIds
+      }
+      unhealthy: {
+        severity: 'Sev1'
+        description: 'Overall system health is unhealthy — a critical subsystem is down.'
+        actionGroupIds: alertActionGroupIds
+      }
+    }
+  }
+}
+
+// ---- Shared signal definition: node CPU usage % --------------------------------------------
+// Reusable AzureResourceMetric definition referenced by every service entity. The metric +
+// thresholds live here once; each entity's signal group supplies the target resource. Tune the
+// thresholds in one place and all referencing entities pick it up.
+resource nodeCpuUsageSignalDef 'Microsoft.CloudHealth/healthmodels/signaldefinitions@2026-05-01-preview' = {
+  parent: healthModel
+  name: 'node-cpu-usage'
+  properties: {
+    signalKind: 'AzureResourceMetric'
+    displayName: 'Node CPU usage %'
+    refreshInterval: 'PT5M'
+    dataUnit: 'Percent'
+    metricNamespace: 'microsoft.containerservice/managedclusters'
+    metricName: 'node_cpu_usage_percentage'
+    timeGrain: 'PT5M'
+    aggregationType: 'Average'
+    evaluationRules: {
+      degradedRule: {
+        operator: 'GreaterThan'
+        threshold: 80
+      }
+      unhealthyRule: {
+        operator: 'GreaterThan'
+        threshold: 95
+      }
+    }
   }
 }
 
@@ -205,6 +253,19 @@ resource serviceEntities 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01
         x: svc.x
         y: 400
       }
+      // Page on service health-state changes; severity escalates from degraded -> unhealthy.
+      alerts: {
+        degraded: {
+          severity: 'Sev3'
+          description: '${svc.displayName} service is degraded (reduced replicas, restarts, or resource saturation).'
+          actionGroupIds: alertActionGroupIds
+        }
+        unhealthy: {
+          severity: 'Sev2'
+          description: '${svc.displayName} service is unhealthy — availability SLO at risk.'
+          actionGroupIds: alertActionGroupIds
+        }
+      }
       signalGroups: {
         // Azure resource (AKS cluster) metrics + Azure Resource Health.
         azureResource: {
@@ -215,25 +276,11 @@ resource serviceEntities 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01
           }
           signals: [
             {
+              // References the shared `node-cpu-usage` signal definition; the target resource
+              // (this cluster) comes from the azureResourceId on the signal group above.
               signalKind: 'AzureResourceMetric'
               name: 'node-cpu-usage'
-              displayName: 'Node CPU usage %'
-              refreshInterval: 'PT5M'
-              dataUnit: 'Percent'
-              metricNamespace: 'microsoft.containerservice/managedclusters'
-              metricName: 'node_cpu_usage_percentage'
-              timeGrain: 'PT5M'
-              aggregationType: 'Average'
-              evaluationRules: {
-                degradedRule: {
-                  operator: 'GreaterThan'
-                  threshold: 80
-                }
-                unhealthyRule: {
-                  operator: 'GreaterThan'
-                  threshold: 95
-                }
-              }
+              signalDefinitionName: nodeCpuUsageSignalDef.name
             }
           ]
         }
@@ -348,6 +395,88 @@ resource serviceEntities 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01
                 }
               }
             }
+            {
+              // Golden signal - Saturation: pod CPU usage as a percentage of the configured CPU limit.
+              signalKind: 'PrometheusMetricsQuery'
+              name: 'cpu-saturation'
+              displayName: 'CPU saturation % (vs limit)'
+              refreshInterval: 'PT5M'
+              dataUnit: 'Percent'
+              queryText: 'sum(rate(container_cpu_usage_seconds_total{namespace="loadgen",pod=~"${svc.name}-.*",container!="",container!="POD"}[5m])) / sum(kube_pod_container_resource_limits{namespace="loadgen",pod=~"${svc.name}-.*",resource="cpu"}) * 100 or vector(0)'
+              timeGrain: 'PT5M'
+              evaluationRules: {
+                degradedRule: {
+                  operator: 'GreaterThan'
+                  threshold: 80
+                }
+                unhealthyRule: {
+                  operator: 'GreaterThan'
+                  threshold: 95
+                }
+              }
+            }
+            {
+              // Golden signal - Saturation: pod working-set memory as a percentage of the memory limit.
+              signalKind: 'PrometheusMetricsQuery'
+              name: 'memory-saturation'
+              displayName: 'Memory saturation % (vs limit)'
+              refreshInterval: 'PT5M'
+              dataUnit: 'Percent'
+              queryText: 'sum(container_memory_working_set_bytes{namespace="loadgen",pod=~"${svc.name}-.*",container!="",container!="POD"}) / sum(kube_pod_container_resource_limits{namespace="loadgen",pod=~"${svc.name}-.*",resource="memory"}) * 100 or vector(0)'
+              timeGrain: 'PT5M'
+              evaluationRules: {
+                degradedRule: {
+                  operator: 'GreaterThan'
+                  threshold: 80
+                }
+                unhealthyRule: {
+                  operator: 'GreaterThan'
+                  threshold: 95
+                }
+              }
+            }
+            {
+              // Golden signal - Availability (SLO): percentage of desired replicas that are available.
+              signalKind: 'PrometheusMetricsQuery'
+              name: 'slo-availability'
+              displayName: 'SLO availability % (available/desired replicas)'
+              refreshInterval: 'PT5M'
+              dataUnit: 'Percent'
+              queryText: 'sum(kube_deployment_status_replicas_available{deployment="${svc.name}",namespace="loadgen"}) / sum(kube_deployment_spec_replicas{deployment="${svc.name}",namespace="loadgen"}) * 100 or vector(0)'
+              timeGrain: 'PT5M'
+              evaluationRules: {
+                degradedRule: {
+                  operator: 'LessThan'
+                  threshold: 100
+                }
+                unhealthyRule: {
+                  operator: 'LessThan'
+                  threshold: 67
+                }
+              }
+            }
+            {
+              // Error-budget fast-burn: how quickly the 99% availability SLO budget is being consumed
+              // over the last hour. >1 means burning faster than the budget allows; ~14 is the classic
+              // 1h fast-burn page threshold. (1 - 0.99) = 0.01 is the allowed unavailability.
+              signalKind: 'PrometheusMetricsQuery'
+              name: 'slo-error-budget-burn'
+              displayName: 'SLO error-budget burn rate (1h)'
+              refreshInterval: 'PT5M'
+              dataUnit: 'Count'
+              queryText: '(1 - (sum(avg_over_time(kube_deployment_status_replicas_available{deployment="${svc.name}",namespace="loadgen"}[1h])) / sum(avg_over_time(kube_deployment_spec_replicas{deployment="${svc.name}",namespace="loadgen"}[1h])))) / (1 - 0.99) or vector(0)'
+              timeGrain: 'PT5M'
+              evaluationRules: {
+                degradedRule: {
+                  operator: 'GreaterThan'
+                  threshold: 1
+                }
+                unhealthyRule: {
+                  operator: 'GreaterThan'
+                  threshold: 14
+                }
+              }
+            }
           ]
         }
       }
@@ -451,6 +580,18 @@ resource aksEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-previ
     canvasPosition: {
       x: 0
       y: 600
+    }
+    alerts: {
+      degraded: {
+        severity: 'Sev2'
+        description: 'AKS cluster is degraded — node pressure, scheduling failures, or NAP capacity issues.'
+        actionGroupIds: alertActionGroupIds
+      }
+      unhealthy: {
+        severity: 'Sev1'
+        description: 'AKS cluster is unhealthy — nodes not ready or the cluster cannot schedule workloads.'
+        actionGroupIds: alertActionGroupIds
+      }
     }
     signalGroups: {
       azureResource: {
@@ -854,6 +995,18 @@ resource apiServerEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01
       x: 0
       y: 1000
     }
+    alerts: {
+      degraded: {
+        severity: 'Sev2'
+        description: 'API server is degraded — elevated latency, error rate, or inflight-request pressure.'
+        actionGroupIds: alertActionGroupIds
+      }
+      unhealthy: {
+        severity: 'Sev1'
+        description: 'API server is unhealthy — control-plane availability is impacted.'
+        actionGroupIds: alertActionGroupIds
+      }
+    }
     signalGroups: {
       azureMonitorWorkspace: {
         authenticationSetting: authSetting.name
@@ -976,6 +1129,18 @@ resource kubeletEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-p
     canvasPosition: {
       x: -220
       y: 1000
+    }
+    alerts: {
+      degraded: {
+        severity: 'Sev3'
+        description: 'Kubelet is degraded — elevated runtime/storage operation latency or errors.'
+        actionGroupIds: alertActionGroupIds
+      }
+      unhealthy: {
+        severity: 'Sev2'
+        description: 'Kubelet is unhealthy — one or more kubelets are down or failing operations.'
+        actionGroupIds: alertActionGroupIds
+      }
     }
     signalGroups: {
       azureMonitorWorkspace: {

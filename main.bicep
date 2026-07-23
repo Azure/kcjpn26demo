@@ -8,6 +8,9 @@ param location string = 'eastasia'
 @maxLength(12)
 param namePrefix string = 'kcjpn'
 
+@description('Optional resource ID of an Azure Monitor action group notified when a health-model entity changes state. Leave empty to create alert rules without notifications.')
+param actionGroupId string = ''
+
 // ---- Names ------------------------------------------------------------------------------------
 var vnetName = '${namePrefix}-vnet'
 var lawName = '${namePrefix}-law'
@@ -74,6 +77,7 @@ module healthModel './modules/health-model.bicep' = {
     aksResourceId: aks.outputs.aksId
     logAnalyticsWorkspaceId: monitoring.outputs.logAnalyticsWorkspaceId
     azureMonitorWorkspaceId: monitoring.outputs.azureMonitorWorkspaceId
+    actionGroupId: actionGroupId
   }
 }
 
