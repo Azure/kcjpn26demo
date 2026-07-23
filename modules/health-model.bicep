@@ -799,27 +799,31 @@ resource subscriptionEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05
       azureLogAnalytics: {
         authenticationSetting: authSetting.name
         logAnalyticsWorkspaceResourceId: logAnalyticsWorkspaceId
-        signals: [
-          {
-            signalKind: 'LogAnalyticsQuery'
-            name: 'subscription-vcpu-quota'
-            displayName: 'Subscription vCPU quota usage'
-            refreshInterval: 'PT5M'
-            dataUnit: 'Percent'
-            queryText: 'arg("").QuotaResources\n| where subscriptionId =~ \'${subscription().subscriptionId}\'\n| where type =~ \'microsoft.compute/locations/usages\'\n| where location in~ (\'${resourceGroup().location}\')\n| mv-expand quota = properties.value limit 2000\n| extend currentValue = tolong(quota.currentValue)\n| extend quotaLimit = tolong(quota[\'limit\'])\n| where quotaLimit > 0\n| where currentValue > 0\n| extend usagePercent = todouble(currentValue) * 100.0 / todouble(quotaLimit)\n| summarize usagePercent = max(usagePercent)'
-            valueColumnName: 'usagePercent'
-            evaluationRules: {
-              degradedRule: {
-                operator: 'GreaterThanOrEqual'
-                threshold: 70
-              }
-              unhealthyRule: {
-                operator: 'GreaterThanOrEqual'
-                threshold: 90
-              }
-            }
-          }
-        ]
+        // TEMPORARILY DISABLED: the subscription-vcpu-quota signal is not working. The KQL
+        // `arg("")` cross-service query against Azure Resource Graph is not returning data.
+        // Re-enable once the query/permissions are fixed.
+        signals: []
+        // signals: [
+        //   {
+        //     signalKind: 'LogAnalyticsQuery'
+        //     name: 'subscription-vcpu-quota'
+        //     displayName: 'Subscription vCPU quota usage'
+        //     refreshInterval: 'PT5M'
+        //     dataUnit: 'Percent'
+        //     queryText: 'arg("").QuotaResources\n| where subscriptionId =~ \'${subscription().subscriptionId}\'\n| where type =~ \'microsoft.compute/locations/usages\'\n| where location in~ (\'${resourceGroup().location}\')\n| mv-expand quota = properties.value limit 2000\n| extend currentValue = tolong(quota.currentValue)\n| extend quotaLimit = tolong(quota[\'limit\'])\n| where quotaLimit > 0\n| where currentValue > 0\n| extend usagePercent = todouble(currentValue) * 100.0 / todouble(quotaLimit)\n| summarize usagePercent = max(usagePercent)'
+        //     valueColumnName: 'usagePercent'
+        //     evaluationRules: {
+        //       degradedRule: {
+        //         operator: 'GreaterThanOrEqual'
+        //         threshold: 70
+        //       }
+        //       unhealthyRule: {
+        //         operator: 'GreaterThanOrEqual'
+        //         threshold: 90
+        //       }
+        //     }
+        //   }
+        // ]
       }
     }
   }
