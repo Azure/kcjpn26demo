@@ -82,14 +82,14 @@ spec:
     kind: Deployment
     name: controlplane
   minReplicas: 1
-  maxReplicas: 10
+  maxReplicas: 15
   metrics:
     - type: Resource
       resource:
         name: cpu
         target:
           type: Utilization
-          averageUtilization: 50
+          averageUtilization: 75
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 30
@@ -166,14 +166,14 @@ spec:
     kind: Deployment
     name: rulesexecution
   minReplicas: 1
-  maxReplicas: 10
+  maxReplicas: 15
   metrics:
     - type: Resource
       resource:
         name: cpu
         target:
           type: Utilization
-          averageUtilization: 50
+          averageUtilization: 75
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 30
@@ -250,14 +250,14 @@ spec:
     kind: Deployment
     name: backgroundprocessor
   minReplicas: 1
-  maxReplicas: 10
+  maxReplicas: 15
   metrics:
     - type: Resource
       resource:
         name: cpu
         target:
           type: Utilization
-          averageUtilization: 50
+          averageUtilization: 75
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 30
@@ -334,14 +334,14 @@ spec:
     kind: Deployment
     name: alertshandler
   minReplicas: 1
-  maxReplicas: 10
+  maxReplicas: 15
   metrics:
     - type: Resource
       resource:
         name: cpu
         target:
           type: Utilization
-          averageUtilization: 50
+          averageUtilization: 75
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 30
