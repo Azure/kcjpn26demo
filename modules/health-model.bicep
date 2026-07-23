@@ -262,7 +262,7 @@ resource serviceEntities 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01
               displayName: 'Max container restarts'
               refreshInterval: 'PT5M'
               dataUnit: 'Count'
-              queryText: 'KubePodInventory | where Namespace == "loadgen" | where ControllerName startswith "${svc.name}" | summarize Restarts = max(ContainerRestartCount) by Name | summarize MaxRestarts = max(Restarts)'
+              queryText: 'KubePodInventory | where Namespace == "loadgen" | where ControllerName startswith "${svc.name}" | summarize Restarts = max(ContainerRestartCount) by Name | summarize MaxRestarts = max(Restarts) | extend MaxRestarts = coalesce(MaxRestarts, 0)'
               timeGrain: 'PT15M'
               valueColumnName: 'MaxRestarts'
               evaluationRules: {
@@ -398,7 +398,7 @@ resource lawEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-previ
             displayName: 'Minutes since last heartbeat'
             refreshInterval: 'PT5M'
             dataUnit: 'Count'
-            queryText: 'Heartbeat | summarize MinutesSinceLastHeartbeat = datetime_diff("minute", now(), max(TimeGenerated))'
+            queryText: 'Heartbeat | summarize MinutesSinceLastHeartbeat = datetime_diff("minute", now(), max(TimeGenerated)) | extend MinutesSinceLastHeartbeat = coalesce(MinutesSinceLastHeartbeat, 999)'
             timeGrain: 'PT15M'
             valueColumnName: 'MinutesSinceLastHeartbeat'
             evaluationRules: {
@@ -468,7 +468,7 @@ resource aksEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-previ
             evaluationRules: {
               degradedRule: {
                 operator: 'GreaterThan'
-                threshold: 80
+                threshold: 85
               }
               unhealthyRule: {
                 operator: 'GreaterThan'
@@ -638,7 +638,7 @@ resource aksEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-previ
             displayName: 'Unschedulable pods (scheduler)'
             refreshInterval: 'PT5M'
             dataUnit: 'Count'
-            queryText: 'sum(scheduler_unschedulable_pods)'
+            queryText: 'sum(scheduler_unschedulable_pods) or vector(0)'
             timeGrain: 'PT5M'
             evaluationRules: {
               degradedRule: {
@@ -660,7 +660,10 @@ resource aksEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-previ
             displayName: 'NAP nodes created (1h)'
             refreshInterval: 'PT5M'
             dataUnit: 'Count'
-            queryText: 'sum(increase(karpenter_nodes_created_total[1h]))'
+            // `or vector(0)` yields scalar 0 when the metric isn't collected yet (NAP control
+            // plane metrics preview / scrape target not enabled), so the signal returns a numeric
+            // 0 instead of erroring on an empty result. Caveat: this masks a missing metric as 0.
+            queryText: 'sum(increase(karpenter_nodes_created_total[1h])) or vector(0)'
             timeGrain: 'PT5M'
             evaluationRules: {
               degradedRule: {
