@@ -16,6 +16,9 @@ param azureMonitorWorkspaceId string
 @description('Resource ID of the action group notified when a service entity becomes degraded or unhealthy.')
 param actionGroupId string
 
+// Action group list applied to entity alerts; empty when no action group is supplied.
+var alertActionGroupIds = empty(actionGroupId) ? [] : [actionGroupId]
+
 // ---- Simulated services (each maps to a Deployment in the `loadgen` namespace) --------------
 // Modeled as child entities of the root node. See sampleworkload.yaml for the workloads.
 var services = [
@@ -136,6 +139,11 @@ var relationships = [
   {
     parent: 'aks-cluster'
     child: 'kubelet'
+    kind: 'DependsOn'
+  }
+  {
+    parent: 'aks-cluster'
+    child: 'etcd'
     kind: 'DependsOn'
   }
 ]
@@ -455,28 +463,6 @@ resource serviceEntities 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01
                 }
               }
             }
-            {
-              // Error-budget fast-burn: how quickly the 99% availability SLO budget is being consumed
-              // over the last hour. >1 means burning faster than the budget allows; ~14 is the classic
-              // 1h fast-burn page threshold. (1 - 0.99) = 0.01 is the allowed unavailability.
-              signalKind: 'PrometheusMetricsQuery'
-              name: 'slo-error-budget-burn'
-              displayName: 'SLO error-budget burn rate (1h)'
-              refreshInterval: 'PT5M'
-              dataUnit: 'Count'
-              queryText: '(1 - (sum(avg_over_time(kube_deployment_status_replicas_available{deployment="${svc.name}",namespace="loadgen"}[1h])) / sum(avg_over_time(kube_deployment_spec_replicas{deployment="${svc.name}",namespace="loadgen"}[1h])))) / (1 - 0.99) or vector(0)'
-              timeGrain: 'PT5M'
-              evaluationRules: {
-                degradedRule: {
-                  operator: 'GreaterThan'
-                  threshold: 1
-                }
-                unhealthyRule: {
-                  operator: 'GreaterThan'
-                  threshold: 14
-                }
-              }
-            }
           ]
         }
       }
@@ -707,11 +693,11 @@ resource aksEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-previ
             evaluationRules: {
               degradedRule: {
                 operator: 'GreaterThan'
-                threshold: 5
+                threshold: 50
               }
               unhealthyRule: {
                 operator: 'GreaterThan'
-                threshold: 20
+                threshold: 200
               }
             }
           }
@@ -1270,6 +1256,161 @@ resource kubeletEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-p
   }
 }
 
+// ---- Control-plane entity: etcd (child of the cluster) --------------------------------------
+// Health derived from the `controlplane-etcd` scrape job in the Azure Monitor workspace (AKS
+// control plane metrics, preview). Requires the AzureMonitorMetricsControlPlanePreview feature +
+// the `controlplane-etcd` default scrape target (enabled in ama-metrics-settings-configmap.yaml).
+// Signals mirror the Kubernetes / ETCD dashboard panels.
+resource etcdEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-preview' = {
+  parent: healthModel
+  name: 'etcd'
+  properties: {
+    displayName: 'etcd'
+    impact: 'Limited'
+    healthObjective: 99
+    canvasPosition: {
+      x: 220
+      y: 1000
+    }
+    alerts: {
+      degraded: {
+        severity: 'Sev2'
+        description: 'etcd is degraded — slow applies/reads, heartbeat failures, or DB approaching quota.'
+        actionGroupIds: alertActionGroupIds
+      }
+      unhealthy: {
+        severity: 'Sev1'
+        description: 'etcd is unhealthy — no leader, members down, or DB at quota. Control-plane writes are impacted.'
+        actionGroupIds: alertActionGroupIds
+      }
+    }
+    signalGroups: {
+      azureMonitorWorkspace: {
+        authenticationSetting: authSetting.name
+        azureMonitorWorkspaceResourceId: azureMonitorWorkspaceId
+        signals: [
+          {
+            // "ETCD - Health Status" panel: 1 when at least one etcd instance is up.
+            signalKind: 'PrometheusMetricsQuery'
+            name: 'etcd-availability'
+            displayName: 'etcd availability'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Count'
+            queryText: 'max(up{job="controlplane-etcd"})'
+            timeGrain: 'PT5M'
+            evaluationRules: {
+              unhealthyRule: {
+                operator: 'LessThan'
+                threshold: 1
+              }
+            }
+          }
+          {
+            // "ETCD has leader" panel: 0 for any member without a leader means quorum/leadership loss.
+            signalKind: 'PrometheusMetricsQuery'
+            name: 'etcd-no-leader'
+            displayName: 'etcd members with a leader'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Count'
+            queryText: 'min(etcd_server_has_leader)'
+            timeGrain: 'PT5M'
+            evaluationRules: {
+              unhealthyRule: {
+                operator: 'LessThan'
+                threshold: 1
+              }
+            }
+          }
+          {
+            // "ETCD heartbeat send failures" panel: rate of leader heartbeat send failures (per s).
+            // Sustained failures indicate leader/network instability that risks leader elections.
+            signalKind: 'PrometheusMetricsQuery'
+            name: 'etcd-heartbeat-failures'
+            displayName: 'etcd heartbeat send failure rate (per s)'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Count'
+            queryText: 'sum(rate(etcd_server_heartbeat_send_failures_total[5m])) or vector(0)'
+            timeGrain: 'PT5M'
+            evaluationRules: {
+              degradedRule: {
+                operator: 'GreaterThan'
+                threshold: 0
+              }
+              unhealthyRule: {
+                operator: 'GreaterThan'
+                threshold: 1
+              }
+            }
+          }
+          {
+            // "ETCD Slow Apply total" panel: rate of slow raft proposal applies (per s). A rising
+            // rate signals disk/CPU pressure on etcd and precedes write latency problems.
+            signalKind: 'PrometheusMetricsQuery'
+            name: 'etcd-slow-applies'
+            displayName: 'etcd slow apply rate (per s)'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Count'
+            queryText: 'sum(rate(etcd_server_slow_apply_total[5m])) or vector(0)'
+            timeGrain: 'PT5M'
+            evaluationRules: {
+              degradedRule: {
+                operator: 'GreaterThan'
+                threshold: 1
+              }
+              unhealthyRule: {
+                operator: 'GreaterThan'
+                threshold: 10
+              }
+            }
+          }
+          {
+            // "ETCD Slow Read Indexes total" panel: rate of slow linearizable read-index requests (per s).
+            signalKind: 'PrometheusMetricsQuery'
+            name: 'etcd-slow-read-indexes'
+            displayName: 'etcd slow read-index rate (per s)'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Count'
+            queryText: 'sum(rate(etcd_server_slow_read_indexes_total[5m])) or vector(0)'
+            timeGrain: 'PT5M'
+            evaluationRules: {
+              degradedRule: {
+                operator: 'GreaterThan'
+                threshold: 1
+              }
+              unhealthyRule: {
+                operator: 'GreaterThan'
+                threshold: 10
+              }
+            }
+          }
+          {
+            // "Percentage Utilization of ETCD database" panel: DB space in use vs. allocated. As the
+            // backend fills toward its quota, etcd risks going read-only (NOSPACE alarm), so a high
+            // utilization percentage is a leading indicator of a control-plane outage.
+            signalKind: 'PrometheusMetricsQuery'
+            name: 'etcd-db-utilization'
+            displayName: 'etcd DB utilization %'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Percent'
+            queryText: 'max(100 * etcd_mvcc_db_total_size_in_use_in_bytes / etcd_mvcc_db_total_size_in_bytes) or vector(0)'
+            timeGrain: 'PT5M'
+            evaluationRules: {
+              degradedRule: {
+                operator: 'GreaterThan'
+                threshold: 80
+              }
+              unhealthyRule: {
+                operator: 'GreaterThan'
+                threshold: 95
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+
 // ---- Relationships: root -> groups -> services -> AKS -> LAW/AMW -----------------------------
 resource entityRelationships 'Microsoft.CloudHealth/healthmodels/relationships@2026-05-01-preview' = [
   for rel in relationships: {
@@ -1290,6 +1431,7 @@ resource entityRelationships 'Microsoft.CloudHealth/healthmodels/relationships@2
       subscriptionEntity
       apiServerEntity
       kubeletEntity
+      etcdEntity
     ]
   }
 ]
