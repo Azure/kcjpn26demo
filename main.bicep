@@ -8,8 +8,8 @@ param location string = 'eastasia'
 @maxLength(12)
 param namePrefix string = 'kcjpn'
 
-@description('Optional resource ID of an Azure Monitor action group notified when a health-model entity changes state. Leave empty to create alert rules without notifications.')
-param actionGroupId string = ''
+@description('Email address that receives alert notifications via the action group.')
+param alertEmailAddress string
 
 // ---- Names ------------------------------------------------------------------------------------
 var vnetName = '${namePrefix}-vnet'
@@ -18,6 +18,7 @@ var amwName = '${namePrefix}-amw'
 var aksName = '${namePrefix}-aks'
 var dnsPrefix = '${namePrefix}aks'
 var healthModelName = '${namePrefix}-health'
+var actionGroupName = '${namePrefix}-alerts-ag'
 
 // ---- Built-in role definition IDs -------------------------------------------------------------
 var roleIds = {
@@ -77,7 +78,7 @@ module healthModel './modules/health-model.bicep' = {
     aksResourceId: aks.outputs.aksId
     logAnalyticsWorkspaceId: monitoring.outputs.logAnalyticsWorkspaceId
     azureMonitorWorkspaceId: monitoring.outputs.azureMonitorWorkspaceId
-    actionGroupId: actionGroupId
+    actionGroupId: actionGroup.outputs.actionGroupId
   }
 }
 
@@ -110,6 +111,15 @@ resource napNetworkContributor 'Microsoft.Authorization/roleAssignments@2022-04-
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', networkContributorRoleId)
     principalId: aks.outputs.aksIdentityPrincipalId
     principalType: 'ServicePrincipal'
+  }
+}
+
+// ---- Alerts action group ----------------------------------------------------------------------
+module actionGroup './modules/action-group.bicep' = {
+  params: {
+    actionGroupName: actionGroupName
+    shortName: 'kcjpnalerts'
+    emailAddress: alertEmailAddress
   }
 }
 

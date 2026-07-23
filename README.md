@@ -18,6 +18,7 @@ Prometheus metrics.
 | Cluster | `Microsoft.ContainerService/managedClusters` — Kubernetes 1.36, NAP `Auto` (default pools `None`), Azure CNI **overlay + Cilium**, managed Entra ID + Azure RBAC |
 | Node pools | Bicep `systempool` (System baseline) + a custom `workload` Karpenter `NodePool` + `AKSNodeClass` (`nodepools.yaml`); NAP's built-in `default` / `system-surge` pools are **disabled** |
 | Health model | `Microsoft.CloudHealth/healthmodels` — a root entity, three logical groups, four service entities, plus `aks-cluster`, `law`, `amw` and `subscription` entities, and a discovery rule that auto-adds NAP `aks-workload-*` node VMs |
+| Alerts | `Microsoft.Insights/actionGroups` — an email action group that notifies `alertEmailAddress` when an alert fires |
 
 The health model's system-assigned identity is granted **Monitoring Reader**, **Reader**,
 **Log Analytics Reader** and **Monitoring Data Reader** on the resource group so it can query
@@ -77,6 +78,8 @@ for the full procedure. The KQL signal needs no preview.
 ## Deploy
 
 Prerequisites: `az` CLI logged in, a target resource group, and NAP available in `eastasia`.
+
+Set the alertEmailAddress parameter to your email address in [`main.bicepparam`](main.bicepparam).
 
 ```powershell
 az group create --name kcjpn-rg --location eastasia

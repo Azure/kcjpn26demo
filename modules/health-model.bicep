@@ -13,11 +13,8 @@ param logAnalyticsWorkspaceId string
 @description('Resource ID of the Azure Monitor workspace (PromQL signals).')
 param azureMonitorWorkspaceId string
 
-@description('Optional resource ID of an Azure Monitor action group to notify when an entity changes health state. Leave empty to create the alert rules without notifications (still visible in Azure Monitor > Alerts).')
-param actionGroupId string = ''
-
-// Wraps the optional action group into the array shape the entity alert config expects.
-var alertActionGroupIds = empty(actionGroupId) ? [] : [actionGroupId]
+@description('Resource ID of the action group notified when a service entity becomes degraded or unhealthy.')
+param actionGroupId string
 
 // ---- Simulated services (each maps to a Deployment in the `loadgen` namespace) --------------
 // Modeled as child entities of the root node. See sampleworkload.yaml for the workloads.
@@ -253,17 +250,20 @@ resource serviceEntities 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01
         x: svc.x
         y: 400
       }
-      // Page on service health-state changes; severity escalates from degraded -> unhealthy.
       alerts: {
         degraded: {
+          actionGroupIds: [
+            actionGroupId
+          ]
+          description: '${svc.displayName} health has degraded.'
           severity: 'Sev3'
-          description: '${svc.displayName} service is degraded (reduced replicas, restarts, or resource saturation).'
-          actionGroupIds: alertActionGroupIds
         }
         unhealthy: {
+          actionGroupIds: [
+            actionGroupId
+          ]
+          description: '${svc.displayName} is unhealthy.'
           severity: 'Sev2'
-          description: '${svc.displayName} service is unhealthy — availability SLO at risk.'
-          actionGroupIds: alertActionGroupIds
         }
       }
       signalGroups: {
