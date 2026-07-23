@@ -71,7 +71,7 @@ is enabled on the cluster. The KQL signal needs no preview.
 
 Prerequisites: `az` CLI logged in, a target resource group, and NAP available in `eastasia`.
 
-Set the required deployment parameters in [`main.bicepparam`](main.bicepparam).
+Set the alertEmailAddress parameter to your email address in [`main.bicepparam`](main.bicepparam).
 
 ```powershell
 az group create --name kcjpn-rg --location eastasia
