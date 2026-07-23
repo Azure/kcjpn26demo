@@ -13,6 +13,9 @@ param logAnalyticsWorkspaceId string
 @description('Resource ID of the Azure Monitor workspace (PromQL signals).')
 param azureMonitorWorkspaceId string
 
+@description('Resource ID of the action group notified when a service entity becomes degraded or unhealthy.')
+param actionGroupId string
+
 // ---- Simulated services (each maps to a Deployment in the `loadgen` namespace) --------------
 // Modeled as child entities of the root node. See sampleworkload.yaml for the workloads.
 var services = [
@@ -198,6 +201,22 @@ resource serviceEntities 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01
       canvasPosition: {
         x: svc.x
         y: 400
+      }
+      alerts: {
+        degraded: {
+          actionGroupIds: [
+            actionGroupId
+          ]
+          description: '${svc.displayName} health has degraded.'
+          severity: 'Sev3'
+        }
+        unhealthy: {
+          actionGroupIds: [
+            actionGroupId
+          ]
+          description: '${svc.displayName} is unhealthy.'
+          severity: 'Sev2'
+        }
       }
       signalGroups: {
         // Azure resource (AKS cluster) metrics + Azure Resource Health.
