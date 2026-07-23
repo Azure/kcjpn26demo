@@ -17,7 +17,7 @@ Prometheus metrics.
 | Metrics | `Microsoft.Monitor/accounts` (AMW) + managed Prometheus DCE/DCR/DCRA + default & custom **Prometheus rule groups** |
 | Cluster | `Microsoft.ContainerService/managedClusters` — Kubernetes 1.36, NAP `Auto` (default pools `None`), Azure CNI **overlay + Cilium**, managed Entra ID + Azure RBAC |
 | Node pools | Bicep `systempool` (System baseline) + a custom `workload` Karpenter `NodePool` + `AKSNodeClass` (`nodepools.yaml`); NAP's built-in `default` / `system-surge` pools are **disabled** |
-| Health model | `Microsoft.CloudHealth/healthmodels` — a root entity, three logical groups, four service entities, plus `aks-cluster`, `law`, `amw` and `subscription` entities |
+| Health model | `Microsoft.CloudHealth/healthmodels` — a root entity, three logical groups, four service entities, plus `aks-cluster`, `law`, `amw` and `subscription` entities, and a discovery rule that auto-adds NAP `aks-workload-*` node VMs |
 | Alerts | `Microsoft.Insights/actionGroups` — an email action group that notifies `alertEmailAddress` when an alert fires |
 
 The health model's system-assigned identity is granted **Monitoring Reader**, **Reader**,
@@ -27,13 +27,13 @@ each data source.
 ### Health model entities & signals
 
 The model is a hierarchy rooted at a single entity named after the health model. Relationships
-carry a `kind` (`DependsOn`, `IsHostedOn`, `SendsTelemetryTo`, `SendsLogsTo`, `SendsMetricsTo`):
+carry a `kind` (`DependsOn`, `IsHostedOn`, `SendsLogsTo`, `SendsMetricsTo`):
 
 ```
 root (kcjpn-health)
 ├── CRUD              → controlplane
 ├── Signal evaluation → rulesexecution, backgroundprocessor
-└── Alerting          → alertshandler          (backgroundprocessor → alertshandler)
+└── Alerting          → alertshandler
 
 every service → aks-cluster → law          (SendsLogsTo)
                             → amw          (SendsMetricsTo)
@@ -45,9 +45,12 @@ every service → aks-cluster → law          (SendsLogsTo)
   - KQL over LAW (`KubePodInventory`) — running pods, max container restarts, and non-running (Failed/Pending) pods.
   - PromQL over AMW — available replicas (`kube_deployment_status_replicas_available`) and HPA saturation.
 - **`aks-cluster`** — Azure Resource Health + node metrics (`node_cpu_usage_percentage`, `node_memory_working_set_percentage`, `node_memory_rss_percentage`, `node_disk_usage_percentage`); PromQL node memory utilisation, not-ready nodes and pending pods; **NAP/Karpenter signals** (see below).
-- **`law`** — Azure Resource Health + `Heartbeat` count metric + KQL `Heartbeat` freshness (degraded > 15 min / unhealthy > 30 min) + Container Insights ingestion volume.
+- **`law`** — Azure Resource Health + KQL `Heartbeat` freshness (degraded > 15 min / unhealthy > 30 min) + Container Insights ingestion volume.
 - **`amw`** — Azure Resource Health + ingestion (`EventsPerMinuteIngestedPercentUtilization`) and active-time-series (`ActiveTimeSeriesPercentUtilization`) utilization metrics + PromQL healthy/unhealthy scrape targets (`up`).
-- **`subscription`** — KQL over Azure Resource Graph (via the `arg("")` operator) for regional vCPU **quota usage %** (degraded ≥ 70 / unhealthy ≥ 90).
+- **`subscription`** — a KQL-over-Azure-Resource-Graph (`arg("")`) regional vCPU **quota usage %** signal, **currently disabled** (the cross-service query isn't returning data); the entity and its `DependsOn` edge remain.
+
+See [`demo-queries.md`](demo-queries.md) for a copy-paste reference of every signal query grouped by
+language (KQL / PromQL) and type.
 
 The logical groups (`CRUD`, `Signal evaluation`, `Alerting`) are roll-up nodes with no signals of
 their own; health propagates upward to the root.
@@ -65,7 +68,12 @@ The `aks-cluster` entity carries dedicated signals for Node Auto Provisioning he
 The two PromQL signals are scraped by the managed-Prometheus `controlplane-kube-scheduler` and
 `controlplane-node-auto-provisioning` default targets, which are only active when
 [AKS control plane metrics (preview)](https://learn.microsoft.com/azure/aks/control-plane-metrics-monitor)
-is enabled on the cluster. The KQL signal needs no preview.
+is enabled on the cluster. The bundled [`ama-metrics-settings-configmap.yaml`](ama-metrics-settings-configmap.yaml)
+already sets `node-auto-provisioning = true` (so `nap-node-churn` works) but leaves
+`kube-scheduler = false` — flip it to `true` under `controlplane-metrics` and re-apply
+(`kubectl apply -f ama-metrics-settings-configmap.yaml`) to light up `nap-unschedulable-pods`; see
+[Monitor AKS control plane metrics](https://learn.microsoft.com/en-us/azure/aks/control-plane-metrics-monitor)
+for the full procedure. The KQL signal needs no preview.
 
 ## Deploy
 
@@ -91,9 +99,11 @@ kubectl apply -f sampleworkload.yaml
 ```
 
 This creates the `loadgen` namespace with four Deployments — `controlplane`, `rulesexecution`,
-`backgroundprocessor` and `alertshandler` — each running a busybox CPU load loop. The pods
-alternate between random busy and idle periods; each Deployment's HPA (`min 1`, `max 10`,
-target 50% CPU) scales it in and out, and NAP provisions/removes nodes to match. Watch it:
+`backgroundprocessor` and `alertshandler` — each running a busybox CPU load loop. Every pod reads
+the same wall clock and drives a synchronized **triangle-wave** load (ramp up then down over a
+600s period), with each service phase-offset so their peaks are staggered. Each Deployment's HPA
+(`min 1`, `max 15`, target 75% CPU) scales it out on the way up and in on the way down, and NAP
+provisions/removes nodes to match. Watch it:
 
 ```powershell
 kubectl get hpa,pods -n loadgen -o wide -w
@@ -130,7 +140,10 @@ they **only** run on the `workload` pool — isolated from the System pool. Appl
   `disableLocalAccounts: false` in [`modules/aks.bicep`](modules/aks.bicep).)
 - **NAP/Karpenter PromQL signals** (`nap-unschedulable-pods`, `nap-node-churn`) only report data
   when [AKS control plane metrics (preview)](https://learn.microsoft.com/azure/aks/control-plane-metrics-monitor)
-  is enabled; the `nap-scheduling-failures` KQL signal works without it.
+  is enabled **and** the matching scrape target is on in
+  [`ama-metrics-settings-configmap.yaml`](ama-metrics-settings-configmap.yaml). The bundled file
+  enables `node-auto-provisioning` but leaves `kube-scheduler` off; the `nap-scheduling-failures`
+  KQL signal works without the preview.
 - Container Insights tables (`KubePodInventory`, `KubeNodeInventory`, `KubeEvents`) and Prometheus
   metrics take a few minutes to appear after the cluster is up before the health model turns green.
 - `main.bicep` targets **resource group** scope.
