@@ -26,11 +26,12 @@ each data source.
 
 ### Health model entities & signals
 
-The model is a hierarchy rooted at a single entity named after the health model. Relationships
-carry a `kind` (`DependsOn`, `IsHostedOn`, `SendsLogsTo`, `SendsMetricsTo`):
+The model is a hierarchy rooted at a single entity (display name **Alerting Platform**, resource
+name `kcjpn-health`). Relationships carry a `kind` (`DependsOn`, `IsHostedOn`, `SendsLogsTo`,
+`SendsMetricsTo`):
 
 ```
-root (kcjpn-health)
+root (Alerting Platform)
 ├── CRUD              → controlplane
 ├── Signal evaluation → rulesexecution, backgroundprocessor
 └── Alerting          → alertshandler
@@ -43,7 +44,7 @@ every service → aks-cluster → law          (SendsLogsTo)
 - **Service entities** (`controlplane`, `rulesexecution`, `backgroundprocessor`, `alertshandler`) each carry three signal groups:
   - Azure resource metric from the AKS cluster (`node_cpu_usage_percentage`, 80 / 95) + Azure Resource Health.
   - KQL over LAW (`KubePodInventory`) — running pods, max container restarts, and non-running (Failed/Pending) pods.
-  - PromQL over AMW — available replicas (`kube_deployment_status_replicas_available`) and HPA saturation.
+  - PromQL over AMW — available replicas (`kube_deployment_status_replicas_available`), HPA saturation, and golden-signal saturation/availability (CPU vs. limit, memory vs. limit, and SLO available/desired replicas).
 - **`aks-cluster`** — Azure Resource Health + node metrics (`node_cpu_usage_percentage`, `node_memory_working_set_percentage`, `node_memory_rss_percentage`, `node_disk_usage_percentage`); PromQL node memory utilisation, not-ready nodes and pending pods; **NAP/Karpenter signals** (see below).
 - **`law`** — Azure Resource Health + KQL `Heartbeat` freshness (degraded > 15 min / unhealthy > 30 min) + Container Insights ingestion volume.
 - **`amw`** — Azure Resource Health + ingestion (`EventsPerMinuteIngestedPercentUtilization`) and active-time-series (`ActiveTimeSeriesPercentUtilization`) utilization metrics + PromQL healthy/unhealthy scrape targets (`up`).
@@ -100,10 +101,13 @@ kubectl apply -f sampleworkload.yaml
 
 This creates the `loadgen` namespace with four Deployments — `controlplane`, `rulesexecution`,
 `backgroundprocessor` and `alertshandler` — each running a busybox CPU load loop. Every pod reads
-the same wall clock and drives a synchronized **triangle-wave** load (ramp up then down over a
-600s period), with each service phase-offset so their peaks are staggered. Each Deployment's HPA
-(`min 1`, `max 15`, target 75% CPU) scales it out on the way up and in on the way down, and NAP
-provisions/removes nodes to match. Watch it:
+the same wall clock: each 600s cycle holds a steady low "green" load, then drives a synchronized
+peak that ramps up then back down, with each service phase-offset so their peaks are staggered.
+`backgroundprocessor` additionally balloons its memory past the container limit at each peak, so
+it gets **OOM-killed** and briefly turns red (memory pressure) before recovering — demonstrating
+an intermittently unhealthy service. Each Deployment's HPA (`min 2`, `max 15`, target 75% CPU)
+scales it out on the way up and in on the way down, and NAP provisions/removes nodes to match.
+Watch it:
 
 ```powershell
 kubectl get hpa,pods -n loadgen -o wide -w

@@ -63,6 +63,24 @@ sum(kube_deployment_status_replicas_available{deployment="controlplane"})
 max(kube_horizontalpodautoscaler_status_current_replicas{horizontalpodautoscaler="controlplane",namespace="loadgen"}) / max(kube_horizontalpodautoscaler_spec_max_replicas{horizontalpodautoscaler="controlplane",namespace="loadgen"}) * 100
 ```
 
+### `cpu-saturation` (service) — pod CPU usage vs. CPU limit (%)
+Golden signal (saturation). `or vector(0)` keeps the result numeric when no pods match.
+```promql
+sum(rate(container_cpu_usage_seconds_total{namespace="loadgen",pod=~"controlplane-.*",container!="",container!="POD"}[5m])) / sum(kube_pod_container_resource_limits{namespace="loadgen",pod=~"controlplane-.*",resource="cpu"}) * 100 or vector(0)
+```
+
+### `memory-saturation` (service) — pod working-set memory vs. memory limit (%)
+Golden signal (saturation). `backgroundprocessor` drives this to its limit and OOM-kills at each load peak.
+```promql
+sum(container_memory_working_set_bytes{namespace="loadgen",pod=~"controlplane-.*",container!="",container!="POD"}) / sum(kube_pod_container_resource_limits{namespace="loadgen",pod=~"controlplane-.*",resource="memory"}) * 100 or vector(0)
+```
+
+### `slo-availability` (service) — available vs. desired replicas (%)
+Golden signal (availability / SLO).
+```promql
+sum(kube_deployment_status_replicas_available{deployment="controlplane",namespace="loadgen"}) / sum(kube_deployment_spec_replicas{deployment="controlplane",namespace="loadgen"}) * 100 or vector(0)
+```
+
 ### `node-memory-util` (aks-cluster) — cluster node memory utilisation (%)
 ```promql
 max(instance:node_memory_utilisation:ratio) * 100
