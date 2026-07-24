@@ -16,13 +16,16 @@ param azureMonitorWorkspaceId string
 @description('Resource ID of the action group notified when a service entity becomes degraded or unhealthy.')
 param actionGroupId string
 
+// Action group list applied to entity alerts; empty when no action group is supplied.
+var alertActionGroupIds = empty(actionGroupId) ? [] : [actionGroupId]
+
 // ---- Simulated services (each maps to a Deployment in the `loadgen` namespace) --------------
 // Modeled as child entities of the root node. See sampleworkload.yaml for the workloads.
 var services = [
   {
     name: 'controlplane'
     displayName: 'Control plane'
-    x: -300
+    x: -330
   }
   {
     name: 'rulesexecution'
@@ -32,12 +35,12 @@ var services = [
   {
     name: 'backgroundprocessor'
     displayName: 'Background processor'
-    x: 100
+    x: 140
   }
   {
     name: 'alertshandler'
     displayName: 'Alerts handler'
-    x: 300
+    x: 360
   }
 ]
 
@@ -80,22 +83,18 @@ var relationships = [
   {
     parent: 'crud'
     child: 'controlplane'
-    kind: 'IsHostedOn'
   }
   {
     parent: 'signal-evaluation'
     child: 'rulesexecution'
-    kind: 'IsHostedOn'
   }
   {
     parent: 'signal-evaluation'
     child: 'backgroundprocessor'
-    kind: 'IsHostedOn'
   }
   {
     parent: 'alerting'
     child: 'alertshandler'
-    kind: 'IsHostedOn'
   }
   {
     parent: 'controlplane'
@@ -130,6 +129,21 @@ var relationships = [
   {
     parent: 'aks-cluster'
     child: 'subscription'
+    kind: 'DependsOn'
+  }
+  {
+    parent: 'aks-cluster'
+    child: 'api-server'
+    kind: 'DependsOn'
+  }
+  {
+    parent: 'aks-cluster'
+    child: 'kubelet'
+    kind: 'DependsOn'
+  }
+  {
+    parent: 'aks-cluster'
+    child: 'etcd'
     kind: 'DependsOn'
   }
 ]
@@ -186,6 +200,48 @@ resource rootEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-prev
       x: 0
       y: 0
     }
+    // Fire an Azure Monitor alert (optionally to an action group) when overall system health drops.
+    alerts: {
+      degraded: {
+        severity: 'Sev2'
+        description: 'Overall system health is degraded — one or more subsystems are not fully healthy.'
+        actionGroupIds: alertActionGroupIds
+      }
+      unhealthy: {
+        severity: 'Sev1'
+        description: 'Overall system health is unhealthy — a critical subsystem is down.'
+        actionGroupIds: alertActionGroupIds
+      }
+    }
+  }
+}
+
+// ---- Shared signal definition: node CPU usage % --------------------------------------------
+// Reusable AzureResourceMetric definition referenced by every service entity. The metric +
+// thresholds live here once; each entity's signal group supplies the target resource. Tune the
+// thresholds in one place and all referencing entities pick it up.
+resource nodeCpuUsageSignalDef 'Microsoft.CloudHealth/healthmodels/signaldefinitions@2026-05-01-preview' = {
+  parent: healthModel
+  name: 'node-cpu-usage'
+  properties: {
+    signalKind: 'AzureResourceMetric'
+    displayName: 'Node CPU usage %'
+    refreshInterval: 'PT5M'
+    dataUnit: 'Percent'
+    metricNamespace: 'microsoft.containerservice/managedclusters'
+    metricName: 'node_cpu_usage_percentage'
+    timeGrain: 'PT5M'
+    aggregationType: 'Average'
+    evaluationRules: {
+      degradedRule: {
+        operator: 'GreaterThan'
+        threshold: 80
+      }
+      unhealthyRule: {
+        operator: 'GreaterThan'
+        threshold: 95
+      }
+    }
   }
 }
 
@@ -228,25 +284,11 @@ resource serviceEntities 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01
           }
           signals: [
             {
+              // References the shared `node-cpu-usage` signal definition; the target resource
+              // (this cluster) comes from the azureResourceId on the signal group above.
               signalKind: 'AzureResourceMetric'
               name: 'node-cpu-usage'
-              displayName: 'Node CPU usage %'
-              refreshInterval: 'PT5M'
-              dataUnit: 'Percent'
-              metricNamespace: 'microsoft.containerservice/managedclusters'
-              metricName: 'node_cpu_usage_percentage'
-              timeGrain: 'PT5M'
-              aggregationType: 'Average'
-              evaluationRules: {
-                degradedRule: {
-                  operator: 'GreaterThan'
-                  threshold: 80
-                }
-                unhealthyRule: {
-                  operator: 'GreaterThan'
-                  threshold: 95
-                }
-              }
+              signalDefinitionName: nodeCpuUsageSignalDef.name
             }
           ]
         }
@@ -361,6 +403,66 @@ resource serviceEntities 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01
                 }
               }
             }
+            {
+              // Golden signal - Saturation: pod CPU usage as a percentage of the configured CPU limit.
+              signalKind: 'PrometheusMetricsQuery'
+              name: 'cpu-saturation'
+              displayName: 'CPU saturation % (vs limit)'
+              refreshInterval: 'PT5M'
+              dataUnit: 'Percent'
+              queryText: 'sum(rate(container_cpu_usage_seconds_total{namespace="loadgen",pod=~"${svc.name}-.*",container!="",container!="POD"}[5m])) / sum(kube_pod_container_resource_limits{namespace="loadgen",pod=~"${svc.name}-.*",resource="cpu"}) * 100 or vector(0)'
+              timeGrain: 'PT5M'
+              evaluationRules: {
+                degradedRule: {
+                  operator: 'GreaterThan'
+                  threshold: 80
+                }
+                unhealthyRule: {
+                  operator: 'GreaterThan'
+                  threshold: 95
+                }
+              }
+            }
+            {
+              // Golden signal - Saturation: pod working-set memory as a percentage of the memory limit.
+              signalKind: 'PrometheusMetricsQuery'
+              name: 'memory-saturation'
+              displayName: 'Memory saturation % (vs limit)'
+              refreshInterval: 'PT5M'
+              dataUnit: 'Percent'
+              queryText: 'sum(container_memory_working_set_bytes{namespace="loadgen",pod=~"${svc.name}-.*",container!="",container!="POD"}) / sum(kube_pod_container_resource_limits{namespace="loadgen",pod=~"${svc.name}-.*",resource="memory"}) * 100 or vector(0)'
+              timeGrain: 'PT5M'
+              evaluationRules: {
+                degradedRule: {
+                  operator: 'GreaterThan'
+                  threshold: 80
+                }
+                unhealthyRule: {
+                  operator: 'GreaterThan'
+                  threshold: 95
+                }
+              }
+            }
+            {
+              // Golden signal - Availability (SLO): percentage of desired replicas that are available.
+              signalKind: 'PrometheusMetricsQuery'
+              name: 'slo-availability'
+              displayName: 'SLO availability % (available/desired replicas)'
+              refreshInterval: 'PT5M'
+              dataUnit: 'Percent'
+              queryText: 'sum(kube_deployment_status_replicas_available{deployment="${svc.name}",namespace="loadgen"}) / sum(kube_deployment_spec_replicas{deployment="${svc.name}",namespace="loadgen"}) * 100 or vector(0)'
+              timeGrain: 'PT5M'
+              evaluationRules: {
+                degradedRule: {
+                  operator: 'LessThan'
+                  threshold: 100
+                }
+                unhealthyRule: {
+                  operator: 'LessThan'
+                  threshold: 67
+                }
+              }
+            }
           ]
         }
       }
@@ -392,11 +494,11 @@ resource lawEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-previ
   name: 'law'
   properties: {
     displayName: 'Log Analytics workspace'
-    impact: 'Standard'
+    impact: 'Suppressed'
     healthObjective: 99
     canvasPosition: {
-      x: 300
-      y: 800
+      x: 270
+      y: 870
     }
     signalGroups: {
       azureResource: {
@@ -464,6 +566,18 @@ resource aksEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-previ
     canvasPosition: {
       x: 0
       y: 600
+    }
+    alerts: {
+      degraded: {
+        severity: 'Sev2'
+        description: 'AKS cluster is degraded — node pressure, scheduling failures, or NAP capacity issues.'
+        actionGroupIds: alertActionGroupIds
+      }
+      unhealthy: {
+        severity: 'Sev1'
+        description: 'AKS cluster is unhealthy — nodes not ready or the cluster cannot schedule workloads.'
+        actionGroupIds: alertActionGroupIds
+      }
     }
     signalGroups: {
       azureResource: {
@@ -579,11 +693,11 @@ resource aksEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-previ
             evaluationRules: {
               degradedRule: {
                 operator: 'GreaterThan'
-                threshold: 5
+                threshold: 50
               }
               unhealthyRule: {
                 operator: 'GreaterThan'
-                threshold: 20
+                threshold: 200
               }
             }
           }
@@ -707,11 +821,11 @@ resource amwEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-previ
   name: 'amw'
   properties: {
     displayName: 'Azure Monitor workspace'
-    impact: 'Standard'
+    impact: 'Suppressed'
     healthObjective: 99
     canvasPosition: {
-      x: 600
-      y: 800
+      x: -350
+      y: 810
     }
     signalGroups: {
       azureResource: {
@@ -814,8 +928,8 @@ resource subscriptionEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05
     impact: 'Standard'
     healthObjective: 99
     canvasPosition: {
-      x: -300
-      y: 800
+      x: 520
+      y: 770
     }
     signalGroups: {
       azureLogAnalytics: {
@@ -851,13 +965,459 @@ resource subscriptionEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05
   }
 }
 
+// ---- Control-plane entity: AKS API server (child of the cluster) -----------------------------
+// Health derived from AKS control plane metrics (preview) in the Azure Monitor workspace, scraped
+// from the `controlplane-apiserver` job. Requires the AzureMonitorMetricsControlPlanePreview
+// feature + the `controlplane-apiserver` default scrape target (enabled in
+// ama-metrics-settings-configmap.yaml). Signals mirror the Kubernetes / API Server dashboard.
+resource apiServerEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-preview' = {
+  parent: healthModel
+  name: 'api-server'
+  properties: {
+    displayName: 'API server'
+    impact: 'Limited'
+    healthObjective: 99
+    canvasPosition: {
+      x: 0
+      y: 1000
+    }
+    alerts: {
+      degraded: {
+        severity: 'Sev2'
+        description: 'API server is degraded — elevated latency, error rate, or inflight-request pressure.'
+        actionGroupIds: alertActionGroupIds
+      }
+      unhealthy: {
+        severity: 'Sev1'
+        description: 'API server is unhealthy — control-plane availability is impacted.'
+        actionGroupIds: alertActionGroupIds
+      }
+    }
+    signalGroups: {
+      azureMonitorWorkspace: {
+        authenticationSetting: authSetting.name
+        azureMonitorWorkspaceResourceId: azureMonitorWorkspaceId
+        signals: [
+          {
+            // "API Server - Health Status" panel: 1 when at least one apiserver instance is up.
+            signalKind: 'PrometheusMetricsQuery'
+            name: 'apiserver-availability'
+            displayName: 'API server availability'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Count'
+            queryText: 'max(up{job="controlplane-apiserver"})'
+            timeGrain: 'PT5M'
+            evaluationRules: {
+              unhealthyRule: {
+                operator: 'LessThan'
+                threshold: 1
+              }
+            }
+          }
+          {
+            // Derived from "API Server HTTP Request by code": rate of 5xx server errors (req/s).
+            signalKind: 'PrometheusMetricsQuery'
+            name: 'apiserver-error-rate'
+            displayName: 'API server 5xx error rate (req/s)'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Count'
+            queryText: 'sum(rate(apiserver_request_total{job="controlplane-apiserver",code=~"5.."}[5m])) or vector(0)'
+            timeGrain: 'PT5M'
+            evaluationRules: {
+              degradedRule: {
+                operator: 'GreaterThan'
+                threshold: 1
+              }
+              unhealthyRule: {
+                operator: 'GreaterThan'
+                threshold: 5
+              }
+            }
+          }
+          {
+            // "Inflight Requests" panel: concurrent read+write requests in flight (capacity ~600).
+            signalKind: 'PrometheusMetricsQuery'
+            name: 'apiserver-inflight-requests'
+            displayName: 'API server inflight requests'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Count'
+            queryText: 'sum(max_over_time(apiserver_current_inflight_requests{job="controlplane-apiserver"}[5m]))'
+            timeGrain: 'PT5M'
+            evaluationRules: {
+              degradedRule: {
+                operator: 'GreaterThan'
+                threshold: 400
+              }
+              unhealthyRule: {
+                operator: 'GreaterThan'
+                threshold: 550
+              }
+            }
+          }
+          {
+            // "API server latency for LIST queries" panel: avg duration for LIST (excl. watch).
+            signalKind: 'PrometheusMetricsQuery'
+            name: 'apiserver-list-latency'
+            displayName: 'API server LIST latency (s)'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Seconds'
+            queryText: 'sum(apiserver_request_duration_seconds_sum{job="controlplane-apiserver",resource=~"cluster|namespaces",verb="list",operation!="watch"}) / sum(apiserver_request_duration_seconds_count{job="controlplane-apiserver",resource=~"cluster|namespaces",verb="list",operation!="watch"}) or vector(0)'
+            timeGrain: 'PT5M'
+            evaluationRules: {
+              degradedRule: {
+                operator: 'GreaterThan'
+                threshold: 1
+              }
+              unhealthyRule: {
+                operator: 'GreaterThan'
+                threshold: 5
+              }
+            }
+          }
+          {
+            // "API Server latency for NON-LIST queries" panel: avg duration for non-LIST (excl. watch).
+            signalKind: 'PrometheusMetricsQuery'
+            name: 'apiserver-nonlist-latency'
+            displayName: 'API server non-LIST latency (s)'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Seconds'
+            queryText: 'sum(apiserver_request_duration_seconds_sum{job="controlplane-apiserver",verb!="list",operation!="watch",scope=~"resource|^$"}) / sum(apiserver_request_duration_seconds_count{job="controlplane-apiserver",verb!="list",operation!="watch",scope=~"resource|^$"}) or vector(0)'
+            timeGrain: 'PT5M'
+            evaluationRules: {
+              degradedRule: {
+                operator: 'GreaterThan'
+                threshold: 1
+              }
+              unhealthyRule: {
+                operator: 'GreaterThan'
+                threshold: 3
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+
+// ---- Node entity: Kubelet (child of the cluster) --------------------------------------------
+// Health derived from the `kubelet` scrape job in the Azure Monitor workspace (kubelet + cadvisor
+// default targets, enabled in ama-metrics-settings-configmap.yaml). Signals mirror the
+// Kubernetes / Kubelet dashboard. These are per-node metrics, so they follow NAP-provisioned
+// nodes automatically.
+resource kubeletEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-preview' = {
+  parent: healthModel
+  name: 'kubelet'
+  properties: {
+    displayName: 'Kubelet'
+    impact: 'Limited'
+    healthObjective: 99
+    canvasPosition: {
+      x: -220
+      y: 1000
+    }
+    alerts: {
+      degraded: {
+        severity: 'Sev3'
+        description: 'Kubelet is degraded — elevated runtime/storage operation latency or errors.'
+        actionGroupIds: alertActionGroupIds
+      }
+      unhealthy: {
+        severity: 'Sev2'
+        description: 'Kubelet is unhealthy — one or more kubelets are down or failing operations.'
+        actionGroupIds: alertActionGroupIds
+      }
+    }
+    signalGroups: {
+      azureMonitorWorkspace: {
+        authenticationSetting: authSetting.name
+        azureMonitorWorkspaceResourceId: azureMonitorWorkspaceId
+        signals: [
+          {
+            // Derived from the "Running Kubelets" panel / `up`: kubelet scrape targets that are down.
+            signalKind: 'PrometheusMetricsQuery'
+            name: 'kubelet-down'
+            displayName: 'Kubelets down'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Count'
+            queryText: 'count(up{job="kubelet"} == 0) or vector(0)'
+            timeGrain: 'PT5M'
+            evaluationRules: {
+              unhealthyRule: {
+                operator: 'GreaterThan'
+                threshold: 0
+              }
+            }
+          }
+          {
+            // "Operation Error Rate" panel: rate of failed container-runtime operations (ops/s).
+            signalKind: 'PrometheusMetricsQuery'
+            name: 'kubelet-runtime-op-errors'
+            displayName: 'Runtime operation error rate (ops/s)'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Count'
+            queryText: 'sum(rate(kubelet_runtime_operations_errors_total{job="kubelet"}[5m])) or vector(0)'
+            timeGrain: 'PT5M'
+            evaluationRules: {
+              degradedRule: {
+                operator: 'GreaterThan'
+                threshold: 1
+              }
+              unhealthyRule: {
+                operator: 'GreaterThan'
+                threshold: 5
+              }
+            }
+          }
+          {
+            // "Operation Duration 99th quantile" panel: P99 container-runtime operation latency.
+            signalKind: 'PrometheusMetricsQuery'
+            name: 'kubelet-runtime-op-latency'
+            displayName: 'Runtime operation P99 latency (s)'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Seconds'
+            queryText: 'histogram_quantile(0.99, sum(rate(kubelet_runtime_operations_duration_seconds_bucket{job="kubelet"}[5m])) by (le)) or vector(0)'
+            timeGrain: 'PT5M'
+            evaluationRules: {
+              degradedRule: {
+                operator: 'GreaterThan'
+                threshold: 1
+              }
+              unhealthyRule: {
+                operator: 'GreaterThan'
+                threshold: 5
+              }
+            }
+          }
+          {
+            // "Pod Start Duration" panel: P99 end-to-end pod start latency (image pulls included).
+            signalKind: 'PrometheusMetricsQuery'
+            name: 'kubelet-pod-start-latency'
+            displayName: 'Pod start P99 latency (s)'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Seconds'
+            queryText: 'histogram_quantile(0.99, sum(rate(kubelet_pod_start_duration_seconds_bucket{job="kubelet"}[5m])) by (le)) or vector(0)'
+            timeGrain: 'PT5M'
+            evaluationRules: {
+              degradedRule: {
+                operator: 'GreaterThan'
+                threshold: 60
+              }
+              unhealthyRule: {
+                operator: 'GreaterThan'
+                threshold: 120
+              }
+            }
+          }
+          {
+            // "PLEG relist duration" panel: P99 PLEG relist latency; a classic kubelet health
+            // indicator (sustained high values signal node/runtime pressure).
+            signalKind: 'PrometheusMetricsQuery'
+            name: 'kubelet-pleg-relist-latency'
+            displayName: 'PLEG relist P99 latency (s)'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Seconds'
+            queryText: 'histogram_quantile(0.99, sum(rate(kubelet_pleg_relist_duration_seconds_bucket{job="kubelet"}[5m])) by (le)) or vector(0)'
+            timeGrain: 'PT5M'
+            evaluationRules: {
+              degradedRule: {
+                operator: 'GreaterThan'
+                threshold: 3
+              }
+              unhealthyRule: {
+                operator: 'GreaterThan'
+                threshold: 10
+              }
+            }
+          }
+          {
+            // "Storage Operation Error Rate" panel: rate of failed volume operations (ops/s).
+            signalKind: 'PrometheusMetricsQuery'
+            name: 'kubelet-storage-op-errors'
+            displayName: 'Storage operation error rate (ops/s)'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Count'
+            queryText: 'sum(rate(storage_operation_errors_total{job="kubelet"}[5m])) or vector(0)'
+            timeGrain: 'PT5M'
+            evaluationRules: {
+              degradedRule: {
+                operator: 'GreaterThan'
+                threshold: 0
+              }
+              unhealthyRule: {
+                operator: 'GreaterThan'
+                threshold: 1
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+
+// ---- Control-plane entity: etcd (child of the cluster) --------------------------------------
+// Health derived from the `controlplane-etcd` scrape job in the Azure Monitor workspace (AKS
+// control plane metrics, preview). Requires the AzureMonitorMetricsControlPlanePreview feature +
+// the `controlplane-etcd` default scrape target (enabled in ama-metrics-settings-configmap.yaml).
+// Signals mirror the Kubernetes / ETCD dashboard panels.
+resource etcdEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-preview' = {
+  parent: healthModel
+  name: 'etcd'
+  properties: {
+    displayName: 'etcd'
+    impact: 'Limited'
+    healthObjective: 99
+    canvasPosition: {
+      x: 220
+      y: 1000
+    }
+    alerts: {
+      degraded: {
+        severity: 'Sev2'
+        description: 'etcd is degraded — slow applies/reads, heartbeat failures, or DB approaching quota.'
+        actionGroupIds: alertActionGroupIds
+      }
+      unhealthy: {
+        severity: 'Sev1'
+        description: 'etcd is unhealthy — no leader, members down, or DB at quota. Control-plane writes are impacted.'
+        actionGroupIds: alertActionGroupIds
+      }
+    }
+    signalGroups: {
+      azureMonitorWorkspace: {
+        authenticationSetting: authSetting.name
+        azureMonitorWorkspaceResourceId: azureMonitorWorkspaceId
+        signals: [
+          {
+            // "ETCD - Health Status" panel: 1 when at least one etcd instance is up.
+            signalKind: 'PrometheusMetricsQuery'
+            name: 'etcd-availability'
+            displayName: 'etcd availability'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Count'
+            queryText: 'max(up{job="controlplane-etcd"})'
+            timeGrain: 'PT5M'
+            evaluationRules: {
+              unhealthyRule: {
+                operator: 'LessThan'
+                threshold: 1
+              }
+            }
+          }
+          {
+            // "ETCD has leader" panel: 0 for any member without a leader means quorum/leadership loss.
+            signalKind: 'PrometheusMetricsQuery'
+            name: 'etcd-no-leader'
+            displayName: 'etcd members with a leader'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Count'
+            queryText: 'min(etcd_server_has_leader)'
+            timeGrain: 'PT5M'
+            evaluationRules: {
+              unhealthyRule: {
+                operator: 'LessThan'
+                threshold: 1
+              }
+            }
+          }
+          {
+            // "ETCD heartbeat send failures" panel: rate of leader heartbeat send failures (per s).
+            // Sustained failures indicate leader/network instability that risks leader elections.
+            signalKind: 'PrometheusMetricsQuery'
+            name: 'etcd-heartbeat-failures'
+            displayName: 'etcd heartbeat send failure rate (per s)'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Count'
+            queryText: 'sum(rate(etcd_server_heartbeat_send_failures_total[5m])) or vector(0)'
+            timeGrain: 'PT5M'
+            evaluationRules: {
+              degradedRule: {
+                operator: 'GreaterThan'
+                threshold: 0
+              }
+              unhealthyRule: {
+                operator: 'GreaterThan'
+                threshold: 1
+              }
+            }
+          }
+          {
+            // "ETCD Slow Apply total" panel: rate of slow raft proposal applies (per s). A rising
+            // rate signals disk/CPU pressure on etcd and precedes write latency problems.
+            signalKind: 'PrometheusMetricsQuery'
+            name: 'etcd-slow-applies'
+            displayName: 'etcd slow apply rate (per s)'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Count'
+            queryText: 'sum(rate(etcd_server_slow_apply_total[5m])) or vector(0)'
+            timeGrain: 'PT5M'
+            evaluationRules: {
+              degradedRule: {
+                operator: 'GreaterThan'
+                threshold: 1
+              }
+              unhealthyRule: {
+                operator: 'GreaterThan'
+                threshold: 10
+              }
+            }
+          }
+          {
+            // "ETCD Slow Read Indexes total" panel: rate of slow linearizable read-index requests (per s).
+            signalKind: 'PrometheusMetricsQuery'
+            name: 'etcd-slow-read-indexes'
+            displayName: 'etcd slow read-index rate (per s)'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Count'
+            queryText: 'sum(rate(etcd_server_slow_read_indexes_total[5m])) or vector(0)'
+            timeGrain: 'PT5M'
+            evaluationRules: {
+              degradedRule: {
+                operator: 'GreaterThan'
+                threshold: 1
+              }
+              unhealthyRule: {
+                operator: 'GreaterThan'
+                threshold: 10
+              }
+            }
+          }
+          {
+            // "Percentage Utilization of ETCD database" panel: DB space in use vs. allocated. As the
+            // backend fills toward its quota, etcd risks going read-only (NOSPACE alarm), so a high
+            // utilization percentage is a leading indicator of a control-plane outage.
+            signalKind: 'PrometheusMetricsQuery'
+            name: 'etcd-db-utilization'
+            displayName: 'etcd DB utilization %'
+            refreshInterval: 'PT5M'
+            dataUnit: 'Percent'
+            queryText: 'max(100 * etcd_mvcc_db_total_size_in_use_in_bytes / etcd_mvcc_db_total_size_in_bytes) or vector(0)'
+            timeGrain: 'PT5M'
+            evaluationRules: {
+              degradedRule: {
+                operator: 'GreaterThan'
+                threshold: 80
+              }
+              unhealthyRule: {
+                operator: 'GreaterThan'
+                threshold: 95
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+
 // ---- Relationships: root -> groups -> services -> AKS -> LAW/AMW -----------------------------
 resource entityRelationships 'Microsoft.CloudHealth/healthmodels/relationships@2026-05-01-preview' = [
   for rel in relationships: {
     parent: healthModel
     name: '${rel.parent}-${rel.child}'
     properties: {
-      displayName: rel.kind
+      displayName: rel.?kind ?? null
       parentEntityName: rel.parent
       childEntityName: rel.child
     }
@@ -869,6 +1429,9 @@ resource entityRelationships 'Microsoft.CloudHealth/healthmodels/relationships@2
       aksEntity
       amwEntity
       subscriptionEntity
+      apiServerEntity
+      kubeletEntity
+      etcdEntity
     ]
   }
 ]

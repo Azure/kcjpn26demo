@@ -45,17 +45,25 @@ spec:
             - /bin/sh
             - -c
             - |
-              PERIOD=600      # full ramp-up + ramp-down cycle (seconds)
+              PERIOD=600      # full cycle (seconds)
               FRAME=10        # control granularity (seconds)
               OFFSET=0        # phase offset for this service (staggers its peak)
+              GREEN=360       # steady low-load "green" hold each cycle (seconds)
+              MAXDUTY=70      # peak busy fraction; stays below full saturation to avoid sustained red
               while true; do
                 NOW=$(date +%s)
                 POS=$(( (NOW + OFFSET) % PERIOD ))
-                HALF=$(( PERIOD / 2 ))
-                if [ "$POS" -lt "$HALF" ]; then
-                  DUTY=$(( POS * 100 / HALF ))          # ramp up 0 -> 100%
+                if [ "$POS" -lt "$GREEN" ]; then
+                  DUTY=5                                    # steady low load -> healthy/green
                 else
-                  DUTY=$(( (PERIOD - POS) * 100 / HALF ))  # ramp down 100 -> 0%
+                  RAMP=$(( PERIOD - GREEN ))
+                  RPOS=$(( POS - GREEN ))
+                  HALF=$(( RAMP / 2 ))
+                  if [ "$RPOS" -lt "$HALF" ]; then
+                    DUTY=$(( RPOS * MAXDUTY / HALF ))       # ramp up 0 -> MAXDUTY
+                  else
+                    DUTY=$(( (RAMP - RPOS) * MAXDUTY / HALF ))  # ramp down MAXDUTY -> 0
+                  fi
                 fi
                 BUSY=$(( FRAME * DUTY / 100 ))
                 END=$(( NOW + BUSY ))
@@ -129,17 +137,25 @@ spec:
             - /bin/sh
             - -c
             - |
-              PERIOD=600      # full ramp-up + ramp-down cycle (seconds)
+              PERIOD=600      # full cycle (seconds)
               FRAME=10        # control granularity (seconds)
               OFFSET=150      # phase offset for this service (staggers its peak)
+              GREEN=360       # steady low-load "green" hold each cycle (seconds)
+              MAXDUTY=70      # peak busy fraction; stays below full saturation to avoid sustained red
               while true; do
                 NOW=$(date +%s)
                 POS=$(( (NOW + OFFSET) % PERIOD ))
-                HALF=$(( PERIOD / 2 ))
-                if [ "$POS" -lt "$HALF" ]; then
-                  DUTY=$(( POS * 100 / HALF ))          # ramp up 0 -> 100%
+                if [ "$POS" -lt "$GREEN" ]; then
+                  DUTY=5                                    # steady low load -> healthy/green
                 else
-                  DUTY=$(( (PERIOD - POS) * 100 / HALF ))  # ramp down 100 -> 0%
+                  RAMP=$(( PERIOD - GREEN ))
+                  RPOS=$(( POS - GREEN ))
+                  HALF=$(( RAMP / 2 ))
+                  if [ "$RPOS" -lt "$HALF" ]; then
+                    DUTY=$(( RPOS * MAXDUTY / HALF ))       # ramp up 0 -> MAXDUTY
+                  else
+                    DUTY=$(( (RAMP - RPOS) * MAXDUTY / HALF ))  # ramp down MAXDUTY -> 0
+                  fi
                 fi
                 BUSY=$(( FRAME * DUTY / 100 ))
                 END=$(( NOW + BUSY ))
@@ -213,17 +229,25 @@ spec:
             - /bin/sh
             - -c
             - |
-              PERIOD=600      # full ramp-up + ramp-down cycle (seconds)
+              PERIOD=600      # full cycle (seconds)
               FRAME=10        # control granularity (seconds)
               OFFSET=300      # phase offset for this service (staggers its peak)
+              GREEN=360       # steady low-load "green" hold each cycle (seconds)
+              MAXDUTY=70      # peak busy fraction; stays below full saturation to avoid sustained red
               while true; do
                 NOW=$(date +%s)
                 POS=$(( (NOW + OFFSET) % PERIOD ))
-                HALF=$(( PERIOD / 2 ))
-                if [ "$POS" -lt "$HALF" ]; then
-                  DUTY=$(( POS * 100 / HALF ))          # ramp up 0 -> 100%
+                if [ "$POS" -lt "$GREEN" ]; then
+                  DUTY=5                                    # steady low load -> healthy/green
                 else
-                  DUTY=$(( (PERIOD - POS) * 100 / HALF ))  # ramp down 100 -> 0%
+                  RAMP=$(( PERIOD - GREEN ))
+                  RPOS=$(( POS - GREEN ))
+                  HALF=$(( RAMP / 2 ))
+                  if [ "$RPOS" -lt "$HALF" ]; then
+                    DUTY=$(( RPOS * MAXDUTY / HALF ))       # ramp up 0 -> MAXDUTY
+                  else
+                    DUTY=$(( (RAMP - RPOS) * MAXDUTY / HALF ))  # ramp down MAXDUTY -> 0
+                  fi
                 fi
                 BUSY=$(( FRAME * DUTY / 100 ))
                 END=$(( NOW + BUSY ))
@@ -297,17 +321,25 @@ spec:
             - /bin/sh
             - -c
             - |
-              PERIOD=600      # full ramp-up + ramp-down cycle (seconds)
+              PERIOD=600      # full cycle (seconds)
               FRAME=10        # control granularity (seconds)
               OFFSET=450      # phase offset for this service (staggers its peak)
+              GREEN=360       # steady low-load "green" hold each cycle (seconds)
+              MAXDUTY=70      # peak busy fraction; stays below full saturation to avoid sustained red
               while true; do
                 NOW=$(date +%s)
                 POS=$(( (NOW + OFFSET) % PERIOD ))
-                HALF=$(( PERIOD / 2 ))
-                if [ "$POS" -lt "$HALF" ]; then
-                  DUTY=$(( POS * 100 / HALF ))          # ramp up 0 -> 100%
+                if [ "$POS" -lt "$GREEN" ]; then
+                  DUTY=5                                    # steady low load -> healthy/green
                 else
-                  DUTY=$(( (PERIOD - POS) * 100 / HALF ))  # ramp down 100 -> 0%
+                  RAMP=$(( PERIOD - GREEN ))
+                  RPOS=$(( POS - GREEN ))
+                  HALF=$(( RAMP / 2 ))
+                  if [ "$RPOS" -lt "$HALF" ]; then
+                    DUTY=$(( RPOS * MAXDUTY / HALF ))       # ramp up 0 -> MAXDUTY
+                  else
+                    DUTY=$(( (RAMP - RPOS) * MAXDUTY / HALF ))  # ramp down MAXDUTY -> 0
+                  fi
                 fi
                 BUSY=$(( FRAME * DUTY / 100 ))
                 END=$(( NOW + BUSY ))
