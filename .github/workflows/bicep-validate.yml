@@ -1,0 +1,66 @@
+name: Validate Bicep
+
+# Compile and lint every Bicep file on PRs so invalid or non-conforming
+# infrastructure changes are caught before merge. Build/lint only — no Azure
+# credentials or deployment involved.
+on:
+  pull_request:
+    paths:
+      - '**/*.bicep'
+      - '**/*.bicepparam'
+      - '**/bicepconfig.json'
+      - '.github/workflows/bicep-validate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Build & lint Bicep
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Bicep ships with the Azure CLI, which is preinstalled on the runner.
+      - name: Ensure Bicep is installed
+        run: |
+          az bicep install
+          az bicep version
+
+      - name: Build and lint all Bicep files
+        shell: bash
+        run: |
+          set -uo pipefail
+          shopt -s globstar nullglob
+          fail=0
+
+          # Build a file and fail on compilation errors OR linter warnings
+          # (the bicepconfig.json ruleset is treated as gating).
+          check() {
+            local cmd=$1 file=$2
+            echo "::group::az bicep $cmd $file"
+            if ! az bicep "$cmd" --file "$file" --stdout >/dev/null 2>diag.txt; then
+              cat diag.txt
+              echo "::error file=$file::Bicep $cmd failed"
+              fail=1
+            else
+              cat diag.txt
+              if grep -qE '\) : (Warning|Error) ' diag.txt; then
+                echo "::error file=$file::Bicep reported warnings/errors"
+                fail=1
+              fi
+            fi
+            echo "::endgroup::"
+          }
+
+          found=0
+          for f in **/*.bicep; do found=1; check build "$f"; done
+          for f in **/*.bicepparam; do found=1; check build-params "$f"; done
+
+          if [ "$found" -eq 0 ]; then
+            echo "No Bicep files found."
+          fi
+
+          exit $fail

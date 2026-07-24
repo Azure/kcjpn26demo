@@ -89,7 +89,7 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: controlplane
-  minReplicas: 1
+  minReplicas: 2
   maxReplicas: 15
   metrics:
     - type: Resource
@@ -181,7 +181,7 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: rulesexecution
-  minReplicas: 1
+  minReplicas: 2
   maxReplicas: 15
   metrics:
     - type: Resource
@@ -234,9 +234,22 @@ spec:
               OFFSET=300      # phase offset for this service (staggers its peak)
               GREEN=360       # steady low-load "green" hold each cycle (seconds)
               MAXDUTY=70      # peak busy fraction; stays below full saturation to avoid sustained red
+              MEMMIB=256      # memory balloon size (MiB); exceeds the 128Mi limit -> OOMKill
               while true; do
                 NOW=$(date +%s)
                 POS=$(( (NOW + OFFSET) % PERIOD ))
+                # Once per cycle, at the load crest, balloon memory past the container limit. The
+                # kernel OOM-kills this shell (container PID 1); the container then restarts and
+                # recovers, so backgroundprocessor flips red (pods briefly not Running) for a few
+                # minutes each cycle due to memory pressure, rather than being permanently red.
+                if [ "$POS" -ge 480 ] && [ "$POS" -lt 490 ]; then
+                  CHUNK=$(head -c 1048576 /dev/zero | tr '\0' 'a')  # 1 MiB block
+                  i=0
+                  while [ "$i" -lt "$MEMMIB" ]; do
+                    BALLOON="$BALLOON$CHUNK"
+                    i=$(( i + 1 ))
+                  done
+                fi
                 if [ "$POS" -lt "$GREEN" ]; then
                   DUTY=5                                    # steady low load -> healthy/green
                 else
@@ -273,7 +286,7 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: backgroundprocessor
-  minReplicas: 1
+  minReplicas: 2
   maxReplicas: 15
   metrics:
     - type: Resource
@@ -365,7 +378,7 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: alertshandler
-  minReplicas: 1
+  minReplicas: 2
   maxReplicas: 15
   metrics:
     - type: Resource

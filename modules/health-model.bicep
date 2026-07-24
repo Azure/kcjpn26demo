@@ -25,22 +25,22 @@ var services = [
   {
     name: 'controlplane'
     displayName: 'Control plane'
-    x: -330
+    x: 875
   }
   {
     name: 'rulesexecution'
     displayName: 'Rules execution'
-    x: -100
+    x: 375
   }
   {
     name: 'backgroundprocessor'
     displayName: 'Background processor'
-    x: 140
+    x: 625
   }
   {
     name: 'alertshandler'
     displayName: 'Alerts handler'
-    x: 360
+    x: 1125
   }
 ]
 
@@ -49,17 +49,17 @@ var logicalGroups = [
   {
     name: 'crud'
     displayName: 'CRUD'
-    x: -300
+    x: 875
   }
   {
     name: 'signal-evaluation'
     displayName: 'Signal evaluation'
-    x: 0
+    x: 500
   }
   {
     name: 'alerting'
     displayName: 'Alerting'
-    x: 300
+    x: 1125
   }
 ]
 
@@ -193,11 +193,11 @@ resource rootEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-prev
   parent: healthModel
   name: healthModelName
   properties: {
-    displayName: healthModelName
+    displayName: 'Alerting Platform'
     impact: 'Standard'
     healthObjective: 99
     canvasPosition: {
-      x: 0
+      x: 875
       y: 0
     }
     // Fire an Azure Monitor alert (optionally to an action group) when overall system health drops.
@@ -256,7 +256,7 @@ resource serviceEntities 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01
       healthObjective: 99
       canvasPosition: {
         x: svc.x
-        y: 400
+        y: 386
       }
       alerts: {
         degraded: {
@@ -481,7 +481,7 @@ resource logicalEntities 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01
       healthObjective: 99
       canvasPosition: {
         x: grp.x
-        y: 200
+        y: 193
       }
     }
   }
@@ -497,8 +497,8 @@ resource lawEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-previ
     impact: 'Suppressed'
     healthObjective: 99
     canvasPosition: {
-      x: 270
-      y: 870
+      x: 250
+      y: 772
     }
     signalGroups: {
       azureResource: {
@@ -564,8 +564,8 @@ resource aksEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-previ
     impact: 'Standard'
     healthObjective: 99
     canvasPosition: {
-      x: 0
-      y: 600
+      x: 750
+      y: 579
     }
     alerts: {
       degraded: {
@@ -824,8 +824,8 @@ resource amwEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-previ
     impact: 'Suppressed'
     healthObjective: 99
     canvasPosition: {
-      x: -350
-      y: 810
+      x: 1250
+      y: 772
     }
     signalGroups: {
       azureResource: {
@@ -928,8 +928,8 @@ resource subscriptionEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05
     impact: 'Standard'
     healthObjective: 99
     canvasPosition: {
-      x: 520
-      y: 770
+      x: 0
+      y: 772
     }
     signalGroups: {
       azureLogAnalytics: {
@@ -978,8 +978,8 @@ resource apiServerEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01
     impact: 'Limited'
     healthObjective: 99
     canvasPosition: {
-      x: 0
-      y: 1000
+      x: 1000
+      y: 772
     }
     alerts: {
       degraded: {
@@ -1113,8 +1113,8 @@ resource kubeletEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-p
     impact: 'Limited'
     healthObjective: 99
     canvasPosition: {
-      x: -220
-      y: 1000
+      x: 500
+      y: 772
     }
     alerts: {
       degraded: {
@@ -1269,8 +1269,8 @@ resource etcdEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-prev
     impact: 'Limited'
     healthObjective: 99
     canvasPosition: {
-      x: 220
-      y: 1000
+      x: 750
+      y: 772
     }
     alerts: {
       degraded: {
