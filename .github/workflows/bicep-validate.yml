@@ -9,6 +9,9 @@ on:
       - '**/*.bicep'
       - '**/*.bicepparam'
       - '**/bicepconfig.json'
+      - 'tests/test_health_queries.py'
+      - 'demo-queries.md'
+      - 'ama-metrics-settings-configmap.yaml'
       - '.github/workflows/bicep-validate.yml'
   workflow_dispatch:
 
@@ -64,3 +67,12 @@ jobs:
           fi
 
           exit $fail
+
+      - name: Check health model PromQL
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=3.15.1
+          curl -fsSL "https://github.com/prometheus/prometheus/releases/download/v${version}/prometheus-${version}.linux-amd64.tar.gz" -o "$RUNNER_TEMP/prometheus.tar.gz"
+          tar -xzf "$RUNNER_TEMP/prometheus.tar.gz" -C "$RUNNER_TEMP" --strip-components=1 "prometheus-${version}.linux-amd64/promtool"
+          python3 tests/test_health_queries.py "$RUNNER_TEMP/promtool"

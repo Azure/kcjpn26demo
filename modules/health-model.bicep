@@ -371,7 +371,7 @@ resource serviceEntities 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01
               displayName: 'Available replicas (Prometheus)'
               refreshInterval: 'PT5M'
               dataUnit: 'Count'
-              queryText: 'sum(kube_deployment_status_replicas_available{deployment="${svc.name}"})'
+              queryText: 'sum(kube_deployment_status_replicas_available{deployment="${svc.name}",namespace="loadgen"})'
               timeGrain: 'PT5M'
               evaluationRules: {
                 degradedRule: {
@@ -1061,7 +1061,7 @@ resource apiServerEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01
             displayName: 'API server LIST latency (s)'
             refreshInterval: 'PT5M'
             dataUnit: 'Seconds'
-            queryText: 'sum(apiserver_request_duration_seconds_sum{job="controlplane-apiserver",resource=~"cluster|namespaces",verb="list",operation!="watch"}) / sum(apiserver_request_duration_seconds_count{job="controlplane-apiserver",resource=~"cluster|namespaces",verb="list",operation!="watch"}) or vector(0)'
+            queryText: 'sum(rate(apiserver_request_duration_seconds_sum{job="controlplane-apiserver",verb="LIST"}[5m])) / sum(rate(apiserver_request_duration_seconds_count{job="controlplane-apiserver",verb="LIST"}[5m]))'
             timeGrain: 'PT5M'
             evaluationRules: {
               degradedRule: {
@@ -1081,7 +1081,7 @@ resource apiServerEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01
             displayName: 'API server non-LIST latency (s)'
             refreshInterval: 'PT5M'
             dataUnit: 'Seconds'
-            queryText: 'sum(apiserver_request_duration_seconds_sum{job="controlplane-apiserver",verb!="list",operation!="watch",scope=~"resource|^$"}) / sum(apiserver_request_duration_seconds_count{job="controlplane-apiserver",verb!="list",operation!="watch",scope=~"resource|^$"}) or vector(0)'
+            queryText: 'sum(rate(apiserver_request_duration_seconds_sum{job="controlplane-apiserver",verb!~"LIST|WATCH|WATCHLIST",scope=~"resource|^$"}[5m])) / sum(rate(apiserver_request_duration_seconds_count{job="controlplane-apiserver",verb!~"LIST|WATCH|WATCHLIST",scope=~"resource|^$"}[5m]))'
             timeGrain: 'PT5M'
             evaluationRules: {
               degradedRule: {
@@ -1384,7 +1384,7 @@ resource etcdEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-prev
             }
           }
           {
-            // "Percentage Utilization of ETCD database" panel: DB space in use vs. allocated. As the
+            // "Percentage Utilization of ETCD database" panel: backend size vs. quota. As the
             // backend fills toward its quota, etcd risks going read-only (NOSPACE alarm), so a high
             // utilization percentage is a leading indicator of a control-plane outage.
             signalKind: 'PrometheusMetricsQuery'
@@ -1392,7 +1392,7 @@ resource etcdEntity 'Microsoft.CloudHealth/healthmodels/entities@2026-05-01-prev
             displayName: 'etcd DB utilization %'
             refreshInterval: 'PT5M'
             dataUnit: 'Percent'
-            queryText: 'max(100 * etcd_mvcc_db_total_size_in_use_in_bytes / etcd_mvcc_db_total_size_in_bytes) or vector(0)'
+            queryText: 'max(100 * etcd_mvcc_db_total_size_in_bytes{job="controlplane-etcd"} / etcd_server_quota_backend_bytes{job="controlplane-etcd"})'
             timeGrain: 'PT5M'
             evaluationRules: {
               degradedRule: {

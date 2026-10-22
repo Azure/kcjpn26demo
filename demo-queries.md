@@ -55,7 +55,7 @@ KubeEvents | where TimeGenerated > ago(15m) | where KubeEventType == "Warning" |
 
 ### `available-replicas` (service) — available Deployment replicas
 ```promql
-sum(kube_deployment_status_replicas_available{deployment="controlplane"})
+sum(kube_deployment_status_replicas_available{deployment="controlplane",namespace="loadgen"})
 ```
 
 ### `hpa-saturation` (service) — HPA current vs. max replicas (%)
@@ -118,6 +118,28 @@ count(up == 1)
 ```promql
 count(up == 0) or vector(0)
 ```
+
+### `apiserver-list-latency` (api-server) — mean LIST latency over the last 5 min
+Uses Kubernetes' uppercase verb labels and all LIST resources/scopes.
+```promql
+sum(rate(apiserver_request_duration_seconds_sum{job="controlplane-apiserver",verb="LIST"}[5m])) / sum(rate(apiserver_request_duration_seconds_count{job="controlplane-apiserver",verb="LIST"}[5m]))
+```
+
+### `apiserver-nonlist-latency` (api-server) — mean non-LIST latency over the last 5 min
+Excludes LIST and streaming WATCH/WATCHLIST requests.
+```promql
+sum(rate(apiserver_request_duration_seconds_sum{job="controlplane-apiserver",verb!~"LIST|WATCH|WATCHLIST",scope=~"resource|^$"}[5m])) / sum(rate(apiserver_request_duration_seconds_count{job="controlplane-apiserver",verb!~"LIST|WATCH|WATCHLIST",scope=~"resource|^$"}[5m]))
+```
+
+### `etcd-db-utilization` (etcd) — backend database size vs. quota (%)
+Uses allocated backend size, including free pages, because that size counts against the quota.
+```promql
+max(100 * etcd_mvcc_db_total_size_in_bytes{job="controlplane-etcd"} / etcd_server_quota_backend_bytes{job="controlplane-etcd"})
+```
+
+These control-plane queries require [control plane metrics](https://learn.microsoft.com/azure/aks/control-plane-metrics-monitor).
+Apply `ama-metrics-settings-configmap.yaml` to include the etcd backend quota metric in ingestion.
+Missing metrics are not replaced with a healthy zero; latency is `NaN` when no matching requests occurred.
 
 ---
 
